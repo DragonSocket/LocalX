@@ -1,50 +1,20 @@
 # TASKS.md
 
-## Status: In Progress
-
-### [x] Task 01: Setup & Contracts
-- **Goal:** Initialize environment and define shared interfaces.
-- **Sub-tasks:**
-    - [x] Initialize project with \`uv\`.
-    - [x] Create directory structure: \`src/\`, \`tests/\`, \`tasks/\`.
-    - [x] Define \`typing.Protocol\` for \`Transport\` (methods: \`send\`, \`stream\`).
-    - [x] Define \`typing.Protocol\` for \`Storage\` (methods: \`add\`, \`get_history\`, \`init\`).
-    - [x] Install dependencies: \`textual\`, \`aiosqlite\`.
-- **Definition of Done:** Project structure exists, \`uv\` environment is ready, and protocols are defined in \`src/interfaces.py\`.
-
-### [ ] Task 02: Network Implementation
-- **Goal:** Implement the \`Transport\` protocol using \`ncat\`.
-- **Sub-tasks:**
-    - [ ] Implement \`NcatManager(Transport)\`.
-    - [ ] Use \`asyncio.create_subprocess_exec\`.
-    - [ ] Implement state tracking (connected, disconnected, error).
-    - [ ] Add unit tests using a \`MockTransport\`.
-- **Definition of Done:** \`NcatManager\` can start a process, send/receive text, and handle process termination. Tests pass.
-
-### [ ] Task 03: Database Implementation
-- **Goal:** Implement the \`Storage\` protocol using SQLite.
-- **Sub-tasks:**
-    - [ ] Implement \`SqliteStorage(Storage)\`.
-    - [ ] Use \`aiosqlite\` for async operations.
-    - [ ] Implement history retrieval.
-    - [ ] Add unit tests using \`:memory:\` database.
-- **Definition of Done:** Data is correctly persisted and retrievable. Tests pass.
-
-### [ ] Task 04: UI Implementation (View)
-- **Goal:** Reactive TUI using Textual.
-- **Sub-tasks:**
-    - [ ] Create \`ChatApp(App)\`.
-    - [ ] Implement \`SetupScreen\` (Inputs: IP, Port, Name).
-    - [ ] Implement \`ChatScreen\` (Widgets: \`ChatLog\`, \`InputBox\`).
-    - [ ] Implement event emission (e.g., \`MessageSent\` event).
-    - [ ] Implement data display (e.g., \`update_log\` method).
-- **Definition of Done:** UI shows screens and handles user input as events, without knowing about networking or DB.
-
-### [ ] Task 05: Orchestration (Integration)
-- **Goal:** Bind all components together.
-- **Sub-tasks:**
-    - [ ] Implement \`ChatController\`.
-    - [ ] Wire \`Transport\` -> \`Controller\` -> \`Storage\` & \`UI\`.
-    - [ ] Wire \`UI\` -> \`Controller\` -> \`Transport\` & \`Storage\`.
-    - [ ] Implement \`main.py\` with Dependency Injection.
-- **Definition of Done:** A functioning end-to-end chat application where messages are sent via \`ncat\`, saved to SQLite, and displayed in the TUI.
+| ID | Type | Task Description | Status |
+| :--- | :--- | :--- | :--- |
+| **1.1** | **DEV** | Define `Transport` Protocol (`src/interfaces.py`) | ⚪ Pending |
+| **1.2** | **DEV** | Define `Storage` Protocol (`src/interfaces.py`) | ⚪ Pending |
+| **1.3** | **DEV** | Setup environment (`uv`, directory structure) | ⚪ Pending |
+| **2.1** | **TEST** | Write tests for `Storage` (using `InMemoryStorage`) | ⚪ Pending |
+| **2.2** | **DEV** | Implement `SqliteStorage` (`aiosqlite`) | ⚪ Pending |
+| **3.1** | **TEST** | Write tests for `Transport` (using `MockTransport`) | ⚪ Pending |
+| **3.2** | **DEV** | Implement `NcatTransport` (`asyncio.subprocess`) | ⚪ Pending |
+| **4.1** | **TEST** | Write tests for `SetupScreen` (verifying `SetupSubmitted`) | ⚪ Pending |
+| **4.2** | **DEV** | Implement `SetupScreen` | ⚪ Pending |
+| **4.3** | **TEST** | Write tests for `ChatScreen` (verifying `MessageSent` & logs) | ⚪ Pending |
+| **4.4** | **DEV** | Implement `ChatScreen` (with color coding) | ⚪ Pending |
+| **4.5** | **DEV** | Implement `ChatApp` (assembly) | ⚪ Pending |
+| **5.1** | **TEST** | Integration tests for `ChatController` | ⚪ Pending |
+| **5.2** | **DEV** | Implement `ChatController` | ⚪ Pending |
+| **5.3** | **TEST** | End-to-End test (controlled environment) | ⚪ Pending |
+| **5.4** | **DEV** | Final `main.py` implementation & wiring | ⚪ Pending |

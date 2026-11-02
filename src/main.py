@@ -21,7 +21,6 @@ class ChatController:
         self.storage = SqliteStorage(f"chat_{username}.db")
         await self.storage.init()
 
-        # Режим: если IP '0.0.0.0', запускаем сервер, иначе клиент
         if ip == "0.0.0.0" or ip == "localhost":
             cmd = ["ncat", "-l", str(port)]
             logger.info(f"Starting server on port {port}")
@@ -34,23 +33,18 @@ class ChatController:
 
         # Загружаем историю
         history = await self.storage.get_history(limit=50)
-        chat_screen = self.app.screen if isinstance(self.app.screen, ChatScreen) else None
         
-        # Если мы только перешли на экран чата, нужно дождаться, пока UI будет готов
-        # В Textual это можно сделать через await app.run() или дождаться появления экрана
-        # Но так как мы в асинхронном методе, мы можем просто подождать немного или использовать события.
-        
-        # Попробуем дождаться ChatScreen
-        for _ in range(10):
+        # Ждем, пока UI переключится на ChatScreen
+        for _ in range(20):
             if isinstance(self.app.screen, ChatScreen):
                 break
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.2)
         
         if isinstance(self.app.screen, ChatScreen):
             for msg in reversed(history):
                 self.app.screen.add_message_to_log(msg["username"], msg["message"], is_me=(msg["username"] == self.username))
             
-            # Запускаем цикл прослушивания потока
+            # Запускаем цикл прослушивания в фоне
             asyncio.create_task(self._listen_loop())
 
     async def _listen_loop(self):
@@ -58,9 +52,6 @@ class ChatController:
             return
         try:
             async for message in self.transport.stream():
-                # Сообщение от ncat. Обычно ncat просто шлет текст.
-                # В нашем протоколе мы не шлем метаданные по сети, только текст.
-                # Поэтому мы считаем, что сообщение пришло от кого-то другого.
                 await self.storage.add_message("Peer", message)
                 if isinstance(self.app.screen, ChatScreen):
                     self.app.screen.add_message_to_log("Peer", message, is_me=False)
@@ -72,13 +63,9 @@ class ChatController:
     async def handle_message_sent(self, message: str):
         if not self.transport or not self.storage:
             return
-        
         try:
-            # 1. Отправляем по сети
             await self.transport.send(message)
-            # 2. Сохраняем у себя
             await self.storage.add_message(self.username, message)
-            # 3. Отображаем у себя
             if isinstance(self.app.screen, ChatScreen):
                 self.app.screen.add_message_to_log(self.username, message, is_me=True)
         except Exception as e:
@@ -90,37 +77,41 @@ class ChatController:
         if self.storage:
             await self.storage.close()
 
-async def main():
-    app = ChatApp()
-    controller = ChatController(app)
+class ChatAppIntegrated(ChatApp):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.controller: ChatController | None = None
 
-    # Перехватываем события приложения для управления логикой
-    # В Textual мы можем переопределить обработчики в самом приложении или слушать внешне.
-    # Здесь мы добавим хуки прямо в app через monkeypatching или subclassing.
-    
-    original_on_setup_submitted = app.on_setup_submitted
-    async def new_on_setup_submitted(event: SetupSubmitted):
-        await original_on_setup_submitted(event)
-        await controller.start_session(event.ip, event.port, event.username)
-    
-    app.on_setup_submitted = new_on_setup_submitted
+    async def on_setup_submitted(self, event: SetupSubmitted) -> None:
+        # 1. Выполняем стандартное поведение ChatApp (переход на экран)
+        super().on_setup_submitted(event)
+        
+        # 2. Инициализируем контроллер, если он еще не создан
+        if self.controller is None:
+            self.controller = ChatController(self)
+        
+        # 3. Запускаем сессию
+        await self.controller.start_session(event.ip, event.port, event.username)
 
-    original_on_message_sent = app.on_message_sent
-    async def new_on_message_sent(event: MessageSent):
-        await original_on_message_sent(event)
-        await controller.handle_message_sent(event.message)
-    
-    app.on_message_sent = new_on_message_sent
+    async def on_message_sent(self, event: MessageSent) -> None:
+        # Перехватываем событие и передаем в контроллер
+        if self.controller:
+            await self.controller.handle_message_sent(event.message)
 
+    async def on_exit(self) -> None:
+        # Гарантируем корректное завершение при выходе из приложения
+        if self.controller:
+            await self.controller.shutdown()
+
+def main():
+    app = ChatAppIntegrated()
     try:
-        await app.run()
+        app.run()
     except KeyboardInterrupt:
         pass
-    finally:
-        await controller.shutdown()
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        sys.exit(0)
+    main()

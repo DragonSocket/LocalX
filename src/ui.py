@@ -69,26 +69,38 @@ class ChatScreen(Screen):
 class ChatApp(App):
     """Главное приложение Textual."""
     CSS = """
+    Screen {
+        background: $surface;
+    }
+
     #setup-container {
         align: center middle;
-        width: 50%;
+        width: 60%;
         height: auto;
         border: heavy $primary;
         padding: 1 2;
+        background: $panel;
     }
+
     Input {
         margin-bottom: 1;
+        background: $surface;
     }
+
     Button {
         width: 100%;
     }
+
     #chat_log {
         height: 1fr;
-        border: sunken $primary;
+        border: panel $primary;
         margin: 1;
+        background: $surface;
     }
+
     #input_box {
         margin: 1;
+        background: $surface;
     }
     """
 
@@ -107,6 +119,4 @@ class ChatApp(App):
 
     def on_message_sent(self, event: MessageSent) -> None:
         """Это событие перехватывается контроллером."""
-        # Мы просто пробрасываем его выше, если нужно, 
-        # но в нашей архитектуре Controller будет слушать App.
         pass
