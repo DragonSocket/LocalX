@@ -1,0 +1,1 @@
+Implement Task 1.1: Create empty file src/interfaces.py

@@ -1,0 +1,1 @@
+Define CSS rules and visual styles for the ChatScreen in src/ui/screens.tcss.

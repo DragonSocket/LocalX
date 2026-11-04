@@ -1,0 +1,1 @@
+Implement Task 1.3: Write Storage Protocol to src/interfaces.py (async def init, async def save, async def fetch_history, async def close). Use typing.Protocol and @runtime_checkable.

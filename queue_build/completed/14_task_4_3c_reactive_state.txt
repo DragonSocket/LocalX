@@ -1,0 +1,1 @@
+Define reactive state attributes for the ChatScreen in src/ui/screens.py.

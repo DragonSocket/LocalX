@@ -1,0 +1,1 @@
+Write E2E test: Verify inbound message flow (Transport $	o$ UI Update) in tests/e2e.py.

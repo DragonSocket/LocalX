@@ -1,0 +1,1 @@
+Define the main ChatApp class structure and basic Textual lifecycle in src/app.py.

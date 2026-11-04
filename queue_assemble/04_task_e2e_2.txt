@@ -1,0 +1,1 @@
+Write E2E test: Verify screen transition from SetupScreen to ChatScreen in tests/e2e.py.

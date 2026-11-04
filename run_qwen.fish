@@ -10,16 +10,18 @@ end
 
 set TASK (cat $CMD_FILE)
 
-echo "🚀 Запуск агента qwen3.5..."
+echo "🚀 Запуск агента через opencode..."
 echo "📖 Контекст: SPEC.md, TASKS.md, INSTRUCTIONS.md"
 echo "--------------------------------------------"
 
-# Мы формируем объединенный промпт, чтобы агент получил всё сразу.
+# Формируем объединенный промпт
 set CONTEXT_PROMPT (cat SPEC.md TASKS.md INSTRUCTIONS.md)
 
-# Выполняем команду. 
-# ВАЖНО: Замени 'qwen3.5' на актуальную команду для запуска твоего агента.
-echo -e "$CONTEXT_PROMPT\n\n--- NEW TASK ---\n$TASK" | qwen3.5
+# Добавляем инструкцию по соблюдению границ задачи (Scope Lockdown)
+set SCOPE_INSTRUCTION "\n\n⚠️ СТРОГОЕ ПРАВИЛО (SCOPE LOCKDOWN):\nВыполняй ТОЛЬКО то, что прямо указано в 'NEW TASK'. \nЗапрещено реализовывать UI, контроллеры или другие слои, если они не являются частью текущей задачи. \nЕсли задача требует изменений вне её границ — остановись и сообщи об этом."
+
+# Выполняем реальный вызов opencode
+opencode run -m ollama/qwen3.5:9b "$CONTEXT_PROMPT$SCOPE_INSTRUCTION\n\n--- NEW TASK ---\n$TASK"
 
 if test $status -ne 0
     echo "--------------------------------------------"

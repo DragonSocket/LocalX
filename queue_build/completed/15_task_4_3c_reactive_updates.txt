@@ -1,0 +1,1 @@
+Implement reactive observers for state-to-UI updates in the ChatScreen in src/ui/screens.py.

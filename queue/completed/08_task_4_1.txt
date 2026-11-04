@@ -1,0 +1,1 @@
+Implement Task 4.1: Write tests for SetupScreen (verifying SetupSubmitted event).

@@ -1,0 +1,1 @@
+Implement a hybrid internal registry in StateManager using a dual-storage approach (e.g., Map for UUIDs and WeakMap for objects) to allow for polymorphic subscription keys without breaking existing API signatures.

@@ -1,0 +1,244 @@
+# VEGA-CHAT UI Stylesheet (screens.tcss)
+# ============================================================
+# Visual Identity System:
+# - Error/System messages: Red ($red or #FF4444)
+# - Self/My messages: Cyan ($cyan or #00BFFFFF)
+# - Peer/Other users: Light Green (#98FB98 or pale green)
+# - Timestamps: Dim/Grey (#666666)
+# ============================================================
+
+/* GLOBAL RESET & FOUNDATION */
+Screen {
+    width: 80;
+    height: 24;
+    overflow: hidden;
+}
+
+/* COLOR PALETTE DEFINITIONS */
+.self-cyan, .self-blue {
+    color: $cyan;           /* Cyan for self messages */
+    font-style: italic;     /* Optional: italicize own messages */
+}
+
+.peer-green {
+    color: #98FB98;         /* Light green for peer messages */
+    text-style: bold;       /* Bold peer names for contrast */
+}
+
+.system-red, .error-message {
+    color: $red;           /* Red for errors and system messages */
+    font-weight: bold;     /* Make system messages stand out */
+}
+
+.timestamp {
+    color: #666666;       /* Dim/grey for timestamps */
+    text-style: dim;      /* Optional: also apply dim style */
+}
+
+/* DIVIDER & SEPARATOR STYLES */
+.divider {
+    width: 1;
+    margin: 0 0.5;
+    color: #444444;        /* Dark grey, subtle but visible */
+    text-style: dim;
+}
+
+/* HEADER SECTION */
+#header-title {
+    height: 1;
+    dock: top;
+    classes="header-top";
+}
+
+.header-top {
+    text-align: center;
+    padding: 0.5;
+}
+
+.header-title {
+    text-style: bold;
+    color: white;          /* White title for contrast */
+    width: 100%;
+}
+
+/* MESSAGES AREA */
+#messages-log, .messages-area, .scroll-area {
+    width: 100%;
+    height: auto;
+    dock: center;
+    classes="scrollable";
+    overflow-y: scroll;    /* Enable vertical scrolling */
+    background: #1e1e1e;   /* Dark message background */
+}
+
+.scrollable {
+    padding: 0.5 0.25;     /* Padding around messages */
+}
+
+.message-row {
+    margin-bottom: 0.5;
+    padding-left: 0;
+}
+
+/* INDIVIDUAL MESSAGE CONTAINER */
+ChatLogMessage {
+    padding: 0 0.25;
+    classes="message-container";
+}
+
+.message-container {
+    /* Inheriting styles from parent widget */
+}
+
+#message-content {
+    width: 80%;
+    margin-left: auto;     /* Right-align message content after timestamp|sender */
+}
+
+/* INPUT SECTION (bottom 14%) */
+#input-container, .input-section, #input-panel {
+    height: 2;             /* ~8% of 24 rows */
+    dock: bottom;
+    layout: horizontal;
+    classes="input-row";
+    gap: 0.5;              /* Small gap between input and button */
+}
+
+.input-row {
+    padding: 0.5;
+}
+
+/* INPUT FIELD STYLING */
+ChatInput.input-field {
+    height: 1;             /* Take full vertical space of container */
+    width: 82%;            /* Leave room for button */
+    border-radius: 3;
+    background: #2d2d2d;   /* Dark input background */
+    color: white;          /* White text in input */
+}
+
+.chat-input {
+    /* Inherent styles from Input widget */
+}
+
+/* SEND BUTTON STYLING */
+#send-button, Button#send-button {
+    height: 1;
+    width: 8%;             /* ~2 columns */
+    variant: contained;
+    border-radius: 3;
+    classes="send-btn";
+}
+
+.send-btn {
+    background-color: $cyan;      /* Cyan background */
+    color: black;                 /* Dark text for contrast */
+    text-style: bold;
+    padding: 0.25 1;
+}
+
+/* Alternative button style (hover state) - Textual handles this automatically */
+
+/* SYSTEM/ERROR MESSAGES ON SCREEN */
+SystemMessage {
+    classes="system-message";
+    background: $red / 0.1;  /* Slight red tint on error backgrounds */
+    color: $red;
+}
+
+.system-message {
+    padding: 0.25;
+    text-align: center;
+}
+
+/* RICHLOG MESSAGE STYLING */
+RichLog.message-row {
+    classes="log-entry";
+    padding: 0.25;
+}
+
+.log-entry {
+    /* Styles inherited from ChatLogMessage */
+}
+
+/* SETUP SCREEN INTEGRATION */
+SetupScreen.setup-container {
+    height: 100%;
+    layout: vertical;
+    background: #1e1e1e;
+}
+
+setup-input {
+    width: 100%;
+    height: 1;
+    border-spacing: 1;
+    margin-top: 2;
+}
+
+#connect-button {
+    width: 100%;
+    height: 1;
+    variant: contained;
+    background-color: $cyan;
+    color: black;
+    text-align: center;
+    margin-top: 1;
+}
+
+/* SCROLLBAR STYLING (optional, depends on Textual version) */
+* {
+    scrollbar-size-vertical: 4;
+    scrollbar-size-horizontal: 4;
+    scrollbar-color: #444 #1e1e1e;
+}
+
+/* UTILITY CLASSES */
+.muted {
+    color: #555;
+}
+
+.highlight {
+    color: $cyan;
+    font-weight: bold;
+}
+
+.danger {
+    color: $red;
+}
+
+.success {
+    color: #98FB98;
+}
+
+/* RESPONSIVE ADJUSTMENTS (for different terminal sizes) */
+@media width < 60 {
+    .header-title {
+        font-size: small;
+    }
+    
+    .message-content {
+        width: 100% !important;
+        margin-left: 0 !important;
+        text-style: white;
+    }
+}
+
+/* DARK THEME OPTIMIZATION */
+* {
+    background: #1e1e1e;
+    color: white;
+}
+
+/* Ensure proper contrast ratios */
+.self-cyan {
+    /* WCAG AA compliance for cyan text */
+    color: #00BFFF;       /* Bright cyan, good contrast on dark bg */
+}
+
+.peer-green {
+    color: #98FB98;       /* Pale green maintains readability */
+}
+
+.system-red {
+    color: #FF4444;       /* Bright red for clear error indication */
+}

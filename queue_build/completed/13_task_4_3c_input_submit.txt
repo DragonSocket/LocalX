@@ -1,0 +1,1 @@
+Implement the on_input_submitted handler to call the ChatController in src/ui/screens.py.

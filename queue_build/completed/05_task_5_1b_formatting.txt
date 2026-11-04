@@ -1,0 +1,1 @@
+Implement text formatting logic in src/controller/formatter.py.

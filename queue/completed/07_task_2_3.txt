@@ -1,0 +1,1 @@
+Implement Task 2.3: Implement SqliteStorage in src/storage/sqlite.py using aiosqlite.

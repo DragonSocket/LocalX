@@ -1,0 +1,1 @@
+Implement Task 2.2: Implement SqliteStorage using aiosqlite.
