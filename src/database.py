@@ -2,18 +2,19 @@
 
 This module provides implementations of the Storage protocol:
 - InMemoryStorage (for development/testing)
-- SqliteStorage (for production - will be implemented next)
+- SqliteStorage (for production)
 
 Usage via Dependency Injection:
     storage = ServiceLocator.get_dependency(Storage)  # Resolves implementation
 """
 
-from typing import AsyncGenerator, Protocol, runtime_checkable
-from dataclasses import dataclass
 import asyncio
 import time
+import aiosqlite
+from typing import AsyncGenerator, Protocol, runtime_checkable
+from dataclasses import dataclass
 
-from interfaces import Storage as StorageBase
+from src.interfaces import Storage as StorageBase
 
 
 @dataclass
@@ -32,66 +33,98 @@ class Message:
 class InMemoryStorage(StorageBase):
     """
     In-memory storage implementation for development and testing.
-    
-    Uses a deque for efficient O(1) append/pop operations.
-    Perfect for TDD before replacing with persistent SQLite storage.
     """
     
     def __init__(self, max_history: int = 1000):
-        """
-        Initialize the in-memory storage.
-        
-        Args:
-            max_history: Maximum messages to keep in memory (default: 1000).
-        """
         self._messages: list[Message] = []
         self.max_history = max_history
     
     async def init(self) -> None:
-        """Initialize storage - nothing to do in memory."""
         pass
     
-    async def save(self, username: str, message: str) -> None:
-        """
-        Save a message from a user.
-        
-        Args:
-            username: The sender's username.
-            message: The message text to store.
-        """
+    async def save(self, username: str, message: str, timestamp: int | None = None) -> bool:
         msg = Message(
             id=len(self._messages) + 1,
             sender=username,
             message=message,
-            timestamp=time.monotonic()
+            timestamp=float(timestamp) if timestamp else time.time()
         )
         self._messages.append(msg)
         
-        # Maintain max_history limit - remove oldest AND keep only last N
         if len(self._messages) > self.max_history:
-            # Remove excess by slicing to keep only the last max_history items
             excess = len(self._messages) - self.max_history
             self._messages = self._messages[excess:]
-            
-    async def fetch_history(self, limit: int = 50) -> list[dict]:
-        """
-        Fetch the most recent messages.
-        
-        Args:
-            limit: Maximum number of messages to return (default: 50).
-            
-        Returns:
-            List of message dictionaries, newest first.
-        """
-        # Take top 'limit' from the end and reverse to get newest first
+        return True
+    
+    async def fetch_history(self, limit: int = 50) -> list[tuple[str, str, int]]:
         remaining = len(self._messages)
         recent_count = min(limit, remaining)
         recent = self._messages[-recent_count:]
-        return [msg.to_dict() for msg in reversed(recent)]
+        return [(msg.sender, msg.message, int(msg.timestamp)) for msg in reversed(recent)]
     
     async def close(self) -> None:
-        """Close storage - nothing to cleanup."""
         pass
+
+
+class SqliteStorage(StorageBase):
+    """
+    Persistent SQLite storage implementation.
+    """
+
+    def __init__(self, db_path: str = "chat.db"):
+        self.db_path = db_path
+        self._conn: aiosqlite.Connection | None = None
+
+    async def init(self) -> None:
+        """Initialize database and create tables."""
+        self._conn = await aiosqlite.connect(self.db_path)
+        await self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender TEXT NOT NULL,
+                message TEXT NOT NULL,
+                timestamp INTEGER NOT NULL
+            )
+        """)
+        await self._conn.commit()
+
+    async def save(self, username: str, message: str, timestamp: int | None = None) -> bool:
+        """Save a message to SQLite."""
+        if not self._conn:
+            raise RuntimeError("Storage not initialized. Call init() first.")
+        
+        ts = timestamp if timestamp is not None else int(time.time())
+        try:
+            await self._conn.execute(
+                "INSERT INTO messages (sender, message, timestamp) VALUES (?, ?, ?)",
+                (username, message, ts)
+            )
+            await self._conn.commit()
+            return True
+        except Exception:
+            return False
+
+    async def fetch_history(self, limit: int = 50) -> list[tuple[str, str, int]]:
+        """Fetch history from SQLite."""
+        if not self._conn:
+            raise RuntimeError("Storage not initialized. Call init() first.")
+            
+        try:
+            async with self._conn.execute(
+                "SELECT sender, message, timestamp FROM messages ORDER BY timestamp DESC LIMIT ?",
+                (limit,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                # SQLite returns tuples: (sender, message, timestamp)
+                return [(row[0], row[1], row[2]) for row in rows]
+        except Exception:
+            return []
+
+    async def close(self) -> None:
+        """Close the database connection."""
+        if self._conn:
+            await self._conn.close()
+            self._conn = None
 
 
 class StorageError(Exception):

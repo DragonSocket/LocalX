@@ -1,5 +1,7 @@
 from __future__ import annotations
 import uuid
+import weakref
+import time
 from typing import Optional, Callable, Any, List
 
 from src.controller.models import HistoryState, PeerInfo, SystemState, Message, UserInfo
@@ -8,7 +10,7 @@ from src.controller.models import HistoryState, PeerInfo, SystemState, Message, 
 class _CallbackHolder:
     """Wrapper ensuring each subscription gets unique identity object."""
     
-    __slots__ = ('_callback', '_type', 'uuid')
+    __slots__ = ('_callback', '_type', 'uuid', '__weakref__')
     
     def __init__(self, callback, event_type):
         self._callback = callback
@@ -63,7 +65,8 @@ class StateManager:
     """Manages state with event subscriptions using shared registry for singleton compatibility."""
 
     # Class-level registry for shared subscriptions (singleton compatibility)
-    _shared_registry: dict = {}
+    # Using WeakValueDictionary to prevent memory leaks from orphaned subscriptions
+    _shared_registry: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
     
     def __init__(self):
         self._history_callbacks: List[_CallbackHolder] = []  
@@ -105,9 +108,7 @@ class StateManager:
         holder = _CallbackHolder(callback, 'history')
         
         # Register in shared registry (singleton-compatible)
-        if holder.uuid not in StateManager._shared_registry:
-            StateManager._shared_registry[holder.uuid] = []
-        StateManager._shared_registry[holder.uuid].append(holder)
+        StateManager._shared_registry[holder.uuid] = holder
         
         # Also store per-instance for independent instances
         self._history_callbacks.append(holder)
@@ -119,16 +120,14 @@ class StateManager:
         holder = _CallbackHolder(callback, 'history')
         
         # Register in shared registry
-        if holder.uuid not in StateManager._shared_registry:
-            StateManager._shared_registry[holder.uuid] = []
-        StateManager._shared_registry[holder.uuid].append(holder)
+        StateManager._shared_registry[holder.uuid] = holder
         
         # Also add to instance list
         self._history_callbacks.append(holder)
         
         sub, unsub = self._make_context_sub(holder, HistorySub)
         return sub  # Context manager's __exit__ calls close which contains unsub
-
+    
     def _make_unsub(self, holder):
         """Create unsubscribe function that removes from both shared and local lists."""
         holder_id = holder.uuid
@@ -141,14 +140,7 @@ class StateManager:
         def unsub():
             # Remove from shared registry first (where most notifications read from)
             if holder_id in StateManager._shared_registry:
-                handlers_list = StateManager._shared_registry[holder_id]
-                for i, h in enumerate(handlers_list):
-                    if h.uuid == holder_id:
-                        handlers_list.pop(i)
-                        break
-                # Clean up empty list entry to avoid memory leak and keep registry clean
-                if not handlers_list:
-                    del StateManager._shared_registry[holder_id]
+                del StateManager._shared_registry[holder_id]
             
             # Also remove from per-instance callback lists (use closure-captured references)
             for callback_list in [history_list, peer_list, system_list]:
@@ -167,9 +159,7 @@ class StateManager:
         holder = _CallbackHolder(callback, 'peers')
         
         # Register in shared registry
-        if holder.uuid not in StateManager._shared_registry:
-            StateManager._shared_registry[holder.uuid] = []
-        StateManager._shared_registry[holder.uuid].append(holder)
+        StateManager._shared_registry[holder.uuid] = holder
         
         # Also store per-instance
         self._peer_callbacks.append(holder)
@@ -181,23 +171,19 @@ class StateManager:
         holder = _CallbackHolder(callback, 'peers')
         
         # Register in shared registry
-        if holder.uuid not in StateManager._shared_registry:
-            StateManager._shared_registry[holder.uuid] = []
-        StateManager._shared_registry[holder.uuid].append(holder)
+        StateManager._shared_registry[holder.uuid] = holder
         
         self._peer_callbacks.append(holder)
         
         sub, unsub = self._make_context_sub(holder, PeerSub)
         return sub
-
+    
     def subscribe_system(self, callback):
         """Subscribe to system events. Returns unsubscribe function."""
         holder = _CallbackHolder(callback, 'system')
         
         # Register in shared registry
-        if holder.uuid not in StateManager._shared_registry:
-            StateManager._shared_registry[holder.uuid] = []
-        StateManager._shared_registry[holder.uuid].append(holder)
+        StateManager._shared_registry[holder.uuid] = holder
         
         self._system_callbacks.append(holder)
         
@@ -208,9 +194,7 @@ class StateManager:
         holder = _CallbackHolder(callback, 'system')
         
         # Register in shared registry
-        if holder.uuid not in StateManager._shared_registry:
-            StateManager._shared_registry[holder.uuid] = []
-        StateManager._shared_registry[holder.uuid].append(holder)
+        StateManager._shared_registry[holder.uuid] = holder
         
         self._system_callbacks.append(holder)
         
@@ -219,12 +203,11 @@ class StateManager:
     
     def _notify_history_callbacks(self):
         """Notify all history subscribers with current history state."""
-        for holder_list in StateManager._shared_registry.values():
-            for holder in list(holder_list):
-                try:
-                    holder(self._shared_history)
-                except Exception:
-                    pass
+        for holder in list(StateManager._shared_registry.values()):
+            try:
+                holder(self._shared_history)
+            except Exception:
+                pass
 
     def update_message(self, text, sender=None, receiver=None):  
         """Add a new message and notify history subscribers.
@@ -255,7 +238,7 @@ class StateManager:
             raise ValueError(str(e))
         
         current_msgs = getattr(self._shared_history, 'messages', [])
-
+        
         last_timestamp = 0
         if len(current_msgs) > 0:
             last_msg = current_msgs[-1]
@@ -293,18 +276,17 @@ class StateManager:
 
     def _notify_peer_callbacks(self):
         """Notify all peer subscribers with current peer state."""
-        for holder_list in StateManager._shared_registry.values():
-            for holder in list(holder_list):
-                try:
-                    # Call with first peer and peer id as string
-                    if hasattr(holder, '__call__'):
-                        # Notify about all connected peers
-                        connected_peers = self._sys_state.connected_peers
-                        if isinstance(connected_peers, dict):
-                            for peer_id, peer_info in connected_peers.items():
-                                holder(peer_info, peer_id)
-                except Exception:
-                    pass
+        for holder in list(StateManager._shared_registry.values()):
+            try:
+                # Call with first peer and peer id as string
+                if hasattr(holder, '__call__'):
+                    # Notify about all connected peers
+                    connected_peers = self._sys_state.connected_peers
+                    if isinstance(connected_peers, dict):
+                        for peer_id, peer_info in connected_peers.items():
+                            holder(peer_info, peer_id)
+            except Exception:
+                pass
 
     def update_peers(self, peers_dict=None):
         """Update peer connections and notify subscribers."""
@@ -326,12 +308,11 @@ class StateManager:
 
     def _notify_system_callbacks(self):
         """Notify all system subscribers with current system state."""
-        for holder_list in StateManager._shared_registry.values():
-            for holder in list(holder_list):
-                try:
-                    holder(self._sys_state)
-                except Exception:
-                    pass
+        for holder in list(StateManager._shared_registry.values()):
+            try:
+                holder(self._sys_state)
+            except Exception:
+                pass
 
     def set_error(self, error_msg=None):
         """Set system error and notify system subscribers."""

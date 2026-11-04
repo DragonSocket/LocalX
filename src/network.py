@@ -61,9 +61,7 @@ class NcatTransport:
             
             if self._process.stdin and not self._process.stdin.at_eof():
                 self._process.stdin.write(data)
-                
-                # Signal EOF to remote peer (ncat will send this on process close normally)
-                # But for simple echo, we'll just let it read back
+                await self._process.stdin.drain()
             
             return True
             

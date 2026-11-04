@@ -6,35 +6,8 @@ This app orchestrates screen transitions:
 3. Handles disconnection by returning to SetupScreen
 """
 
-import asyncio
-from typing import Optional
-
-try:
-    from typing import Protocol, runtime_checkable
-except ImportError:
-    from typing_extensions import Protocol, runtime_checkable
-
-
-@runtime_checkable
-class Transport(Protocol):
-    async def send(self, message: str) -> bool: ...
-
-    async def stream(self) -> any: ...
-
-    async def close(self) -> None: ...
-
-
-@runtime_checkable
-class Storage(Protocol):
-    async def init(self) -> None: ...
-
-    async def save(self, user: str, msg: str, timestamp=None) -> bool: ...
-
-    async def fetch_history(self, limit: int) -> list[tuple[str, str, int]]: ...
-
-    async def close(self) -> None: ...
-
-
+from typing import Optional, AsyncGenerator
+from src.interfaces import Transport, Storage
 from textual.app import App, ComposeResult
 from textual.widgets import Label
 from textual.binding import Binding
@@ -107,7 +80,7 @@ class ChatApp(App):
         Args:
             host: Target host address
             port: Target port number
-            success: True if connection established successfully
+            success: Whether connection succeeded
 
         Action:
             - success=True → Push ChatScreen (Pop SetupScreen)
@@ -198,96 +171,11 @@ class ChatApp(App):
         if self.storage:
             await self.storage.init()
 
-    async def handle_connect_result(
-        self, 
-        host: str, 
-        port: int, 
-        success: bool
-    ) -> None:
-        """Handle connection result.
-
-        Args:
-            host: Target host
-            port: Target port
-            success: Whether connection succeeded
-
-        Action:
-            - success=True → Push ChatScreen
-            - success=False → Show error on SetupScreen, stay there
-        """
-        if not success:
-            # Connection failed - notify user via System message
-            with self:
-                from textual.widgets import Static
-
-                yield Static(
-                    f"Failed to connect to {host}:{port}",
-                    id="connection-error",
-                    classes="error-message"
-                )
-            
-            return
-
-        # Update config
-        self._current_host = host
-        self._current_port = port
-        
-        # Switch to ChatScreen
-        if self.transport and self.storage:
-            chat_screen = ChatScreen(
-                transport=self.transport,
-                storage=self.storage
-            )
-            
-            with self:
-                yield chat_screen
-
-    def on_mount(self) -> None:
-        """Initialize app - mount Header."""
-        pass  # SetupApp handles its own composition
-
-    async def handle_message_received(self, message: str) -> None:
-        """Handle incoming messages from transport.
-
-        In real app: would update Storage and re-render ChatScreen.
-        For now: stub for TDD completeness.
-        """
-        pass
-
-    async def process_stream(self) -> None:
-        """Process stream data from transport."""
-        if not self.transport:
-            return
-        
-        async for line in self.transport.stream():
-            await self.handle_message_received(line)
-        
-        # Stream ended - could show disconnect message
-        pass
-
-    def on_key(self, event) -> None:
-        """Handle key events across screens."""
-        if "q" == str(event.key).lower():
-            self.exit()
-    
     def action_quit(self) -> None:
         """Action: Quit the application."""
         if self.storage:
             asyncio.create_task(self.storage.close())
-        
         self.exit()
-
-    async def cleanup_on_exit(self) -> None:
-        """Cleanup on exit (called before exit)."""
-        if self.transport:
-            await self.transport.close()
-        
-        # Storage should have been closed by cleanup_on_exit
-        pass
-
-    async def cleanup_on_close(self) -> None:
-        """Custom shutdown logic."""
-        await self.cleanup_on_exit()
 
 
 class ChatAppTest(App):
