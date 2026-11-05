@@ -23,6 +23,14 @@ class ChatController:
     _create_state_manager = classmethod(lambda cls: ChatController._state_manager_factory())
 
     @property
+    def storage(self) -> Optional[Storage]:
+        return self._storage
+
+    @property
+    def transport(self) -> Optional[Transport]:
+        return self._transport
+
+    @property
     def state_manager(self) -> StateManager: return self._state_manager
 
     async def load_history(self, limit: int = 100) -> None:

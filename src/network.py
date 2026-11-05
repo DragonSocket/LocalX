@@ -10,10 +10,8 @@ class NcatTransport:
     """Transport using ncat for P2P communication via netcat."""
     
     def __init__(self):
-        self._process: Optional[subprocess.Popen] = None
+        self._process: Optional[asyncio.subprocess.Process] = None
         self._id: Optional[str] = None
-        self._reader: Any = None
-        self._writer: Any = None
         self._status_connected: bool = False
         
     @property
@@ -34,14 +32,14 @@ class NcatTransport:
             self._process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.PIPE
             )
             
             self._status_connected = True
             self._id = self._id or f"{uuid.uuid4().hex[:8]}@{host}:{port}"
             
-        except Exception as e:
-            # Connection failed - reset state  
+        except Exception:
             if self._process is not None:
                 self._process.kill()
                 await self._process.wait()
@@ -53,7 +51,7 @@ class NcatTransport:
     
     async def send(self, message: str) -> bool:
         """Send a message to the peer."""
-        if self._writer is None or not self._status_connected:
+        if self._process is None or not self._status_connected:
             return False
         
         try:
@@ -94,7 +92,6 @@ class NcatTransport:
         """Close the connection gracefully."""
         try:
             if self._process is not None:
-                # Signal EOF first, then terminate  
                 if self._process.stdin and not self._process.stdin.at_eof():
                     self._process.stdin.close()
                 
@@ -109,13 +106,10 @@ class NcatTransport:
                 
                 self._process = None
             
-            self._writer = None
-            self._reader = None
             self._status_connected = False
             self._id = None
             
         except Exception:
-            # Ensure process is cleaned up on error
             if self._process is not None and not self._process.poll():
                 self._process.kill()
                 await self._process.wait()

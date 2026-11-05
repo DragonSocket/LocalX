@@ -153,8 +153,8 @@ class TestChatAppConfig:
         Args:
             app: ChatApp instance
     
-    Returns:
-        None (assertion-based test)
+        Returns:
+            None (assertion-based test)
         """
         for host_val in [None, "local", "", "192.168.1.1"]:
             for port_val in [None, 0, 0x100]:
@@ -198,28 +198,24 @@ class TestChatAppBindings:
 class TestChatAppCompose:
     """Tests for ChatApp.compose() method."""
     
-    def test_compose_yields_setup_screen(self):
+    async def test_compose_yields_setup_screen(self):
         """Test: ChatApp.compose() yields a SetupScreen.
-        
+    
         Expectations:
         1. compose() returns an iterator/generator yielding screens
         2. First screen is SetupScreen with default config
         3. After connection, it would push ChatScreen instead
     
-    This test uses run_test() to inspect what get returned from compose().
+        This test uses run_test() to inspect what get returned from compose().
     """
         app = ChatApp(host="test.example.com", port=9000)
-        
+    
         # Use Textual's test harness to inspect composition
-        with app.run_test(timeout=1):
+        from src.ui.setup_screen import SetupScreen
+        async with app.run_test() as tester:
             # After mounting, the first screen should be SetupScreen
-            assert len(app._screens) > 0, "compose() should yield at least one screen"
-            
-            # The yielded screen should be our composable (SetupScreen or subclass)
-            first_screen = app._screens[-1] if app._screens else None
-            
-        # Note: We can't directly assert isinstance(screen, SetupScreen) inside the test harness
-        # because TestApp wraps things. But compose() method exists and yields something.
+            assert len(app._screen_stack) > 0, "Should have at least one screen in stack"
+            assert isinstance(app._screen_stack[-1], SetupScreen), f"Expected SetupScreen, got {type(app._screen_stack[-1])}"
 
 
 class TestChatAppEventsAndMethods:

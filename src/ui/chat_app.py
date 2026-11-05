@@ -1,11 +1,3 @@
-"""ChatApp - Container for SetupScreen and ChatScreen.
-
-This app orchestrates screen transitions:
-1. Starts on SetupScreen (waiting for connection config)
-2. On connect success, switches to ChatScreen
-3. Handles disconnection by returning to SetupScreen
-"""
-
 from typing import Optional, AsyncGenerator
 from src.interfaces import Transport, Storage
 from textual.app import App, ComposeResult
@@ -21,19 +13,19 @@ class ChatApp(App):
 
     Architecture:
     - SetupScreen (initial): User configures host/port, clicks "Connect"
-    - On success → Pop SetupScreen, Push ChatScreen with transport/storage
-    - On disconnect/error → Pop ChatScreen, Push SetupScreen again
+    - On success → Push ChatScreen with transport/storage
+    - On disconnect/error → Push SetupScreen again
     
     Protocol-based DI: Accepts any Transport/Storage implementation.
     
     Lifecycle:
-    1. start() → mount(SetupScreen)
+    1. start() → on_mount(push SetupScreen)
     2. handle_connect_result(success=True) → push(ChatScreen)
     3. cleanup_on_exit() → close transport/storage resources
     """
 
     BINDINGS = [
-        Binding(key="q", action="quit_app", description="Quit"),
+        Binding(key="q", action="quit", description="Quit"),
         Binding(key="c", action="return_to_setup", description="Back to Setup"),
     ]
 
@@ -61,16 +53,17 @@ class ChatApp(App):
         self._current_port: int | None = None
 
     def compose(self) -> ComposeResult:
-        """Compose initial SetupScreen with connection config."""
-        yield SetupScreen(
-            host=self._initial_host,
-            port=self._initial_port,
-        )
+        """Compose empty app container."""
+        yield from []
 
     def on_mount(self) -> None:
-        """Mount lifecycle hook. App starts here."""
-        # Initial UI already composed above (SetupScreen)
-        pass
+        """When app mounts, push the initial SetupScreen."""
+        self.push_screen(
+            SetupScreen(
+                host=self._initial_host,
+                port=self._initial_port,
+            )
+        )
 
     async def handle_connect_result(
         self, host: str, port: int, success: bool
@@ -83,18 +76,13 @@ class ChatApp(App):
             success: Whether connection succeeded
 
         Action:
-            - success=True → Push ChatScreen (Pop SetupScreen)
+            - success=True → Push ChatScreen
             - success=False → Show error on SetupScreen, stay there
         """
         if not success:
             # Connection failed — show error message
-            with self:
-                from textual.widgets import Static
-                yield Static(
-                    f"Failed to connect to {host}:{port}.",
-                    id="connection-error",
-                    classes="error-message",
-                )
+            # Note: In a real app, we might post a notification or message to SetupScreen
+            self.notify(f"Failed to connect to {host}:{port}.", severity="error")
             return
 
         # Store connection config
@@ -102,47 +90,40 @@ class ChatApp(App):
         self._current_port = port
 
         # If we have transport/storage, create and push ChatScreen
-        if self.transport is not None and self.storage is not None:
+        if self.transport and self.storage:
             chat_screen = ChatScreen(
                 transport=self.transport,
                 storage=self.storage,
             )
-            with self:
-                yield chat_screen
+            self.push_screen(chat_screen)
         else:
             # If no DI dependencies yet, wait for them to be injected externally
-            pass
-
-    def action_quit_app(self) -> None:
-        """Quit application (cleanup + exit)."""
-        self.cleanup_on_exit()
-        self.exit()
+            self.notify("Transport or Storage not configured!", severity="error")
 
     def action_return_to_setup(self) -> None:
         """Return from ChatScreen to SetupScreen."""
-        with self:
-            yield SetupScreen(
+        self.push_screen(
+            SetupScreen(
                 host=self._current_host or self._initial_host,
                 port=self._current_port or self._initial_port,
             )
+        )
+
+    @property
+    def config(self) -> dict[str, str | int]:
+        """Return current configuration."""
+        return {
+            "host": self._current_host or self._initial_host,
+            "port": self._current_port or self._initial_port,
+        }
 
     async def cleanup_on_exit(self) -> None:
-        """Async cleanup before exit.
-
-        Called by action_quit_app, close transport/storage if available.
-        """
-        if self.transport and hasattr(self.transport, 'close'):
-            try:
-                if asyncio.iscoroutinefunction(self.transport.close):
-                    await self.transport.close()
-                else:
-                    self.transport.close()
-            except Exception as e:
-                pass  # Ignore cleanup errors on exit
-
-    async def cleanup_on_close(self) -> None:
-        """Custom shutdown logic after close."""
-        await self.cleanup_on_exit()
+        """Async cleanup before exit."""
+        if self.transport:
+            await self.transport.close()
+        
+        if self.storage:
+            await self.storage.close()
 
     async def handle_message_received(self, message: str) -> None:
         """Override for handling inbound messages from transport."""
@@ -150,33 +131,27 @@ class ChatApp(App):
         pass
 
     async def process_stream(self) -> None:
-        """Process incoming stream data if available."""
+        """Process stream data from transport."""
         if not self.transport:
             return
-
+        
         try:
             async for line in self.transport.stream():
                 await self.handle_message_received(line)
-        except Exception as e:
+        except Exception:
             # Stream error — could show notification here
             pass
 
     def on_key(self, event) -> None:
-        """Handle key events at app level (cross-screen)."""
+        """Handle key events across screens."""
         if event.key.lower() == "q":
-            self.action_quit_app()
+            self.action_quit()
 
-    async def run_async(self):
+    async def run_async(self, *args, **kwargs) -> None:
         """Override to prepare storage/init on startup."""
         if self.storage:
             await self.storage.init()
-
-    def action_quit(self) -> None:
-        """Action: Quit the application."""
-        if self.storage:
-            asyncio.create_task(self.storage.close())
-        self.exit()
-
+        await super().run_async(*args, **kwargs)
 
 class ChatAppTest(App):
     """Test wrapper for ChatApp - simplified for testing."""

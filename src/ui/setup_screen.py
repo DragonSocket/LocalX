@@ -1,16 +1,21 @@
 """SetupScreen - Configure connection to a peer."""
 
+from textual.screen import Screen
 from textual.message import Message
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.widgets import Label, Button
-
+from textual.widgets import Label, Button, Input
+from textual.containers import Vertical
 
 class SetupSubmitted(Message):
     """Message emitted when setup is complete."""
+    def __init__(self, host: str, port: int):
+        super().__init__()
+        self.host = host
+        self.port = port
 
 
-class SetupScreen(App[object]):
+class SetupScreen(Screen):
     """Setup screen for configuring peer connection."""
     
     CSS = """
@@ -18,24 +23,39 @@ class SetupScreen(App[object]):
         height: 100%;
         width: 80;
         layout: vertical;
-        
-        .title-label {
-            text-align: center;
-            color: white;
-        }
-        
-        .host-input, .port-input {
-            margin-bottom: 1;
-        }
+        padding: 1;
     }
-
+    
+    .title-label {
+        text-align: center;
+        color: white;
+        text-style: bold;
+    }
+    
+    .input-group {
+        margin-bottom: 1;
+        layout: horizontal;
+        height: auto;
+    }
+    
+    Label {
+        width: 10;
+    }
+    
+    Input {
+        width: 1;
+    }
+    
+    #connect-btn {
+        margin-top: 1;
+    }
     """
-
+    
     BINDINGS = [
         Binding(key="q", action="quit"),
         Binding("enter", "connect", description="Connect to peer"),
     ]
-
+    
     def __init__(
         self, 
         host: str = "127.0.0.1", 
@@ -45,45 +65,38 @@ class SetupScreen(App[object]):
         self.host = host  
         self.port = port
     
-    @property
-    def config(self) -> dict:
-        """Return current configuration."""
-        return {
-            "host": self.host,
-            "port": self.port,
-        }
-
     def compose(self) -> ComposeResult:
         """Compose the SetupScreen layout with inputs and button."""
-        from textual.widgets import Label as TextualLabel
+        yield Label("Configure Connection", classes="title-label")
         
-        yield TextualLabel(f"Host: {self.host}", id="host-display", classes="title-label")
-        yield TextualLabel(f"Port: {self.port}", id="port-display", classes="title-label")
+        with Vertical(id="input-container"):
+             yield Label("Host:", classes="title-label")
+             yield Input(value=self.host, id="host-input")
+             
+             yield Label("Port:", classes="title-label")
+             yield Input(value=str(self.port), id="port-input")
+             
         yield Button("Connect", variant="primary", id="connect-btn", classes="connect-button connect-label")
 
-    def handle_setup_submitted(self, event: SetupSubmitted) -> None:
-        """Handle SetupSubmitted - this is internal handler pattern."""
-        pass
-
-    # Alias for backward compatibility  
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle Connect button press - emit SETUP_SUBMITTED message."""
+        """Handle Connect button press."""
         if event.button.id == "connect-btn":
-            self.host = event.data.get("host", self.host) if hasattr(self, 'data') else self.host
-            port_data = getattr(event, 'extra', {}).get('port') or self.port
-            await self.handle_connect_result(self.host, port_data, success=True)
+            host_input = self.query_one("#host-input", Input)
+            port_input = self.query_one("#port-input", Input)
+            
+            try:
+                host = host_input.value.strip()
+                port = int(port_input.value.strip())
+                if not host:
+                    raise ValueError("Host cannot be empty")
+                
+                self.post_message(SetupSubmitted(host, port))
+            except ValueError as e:
+                self.notify(f"Invalid input: {e}", severity="error")
 
-    def handle_connect_result(self, host: str, port: int, success: bool) -> None:
-        """Handle connection result from transport."""
-        if not success:
-            return
-        
-        # Simulate successful connection by emitting message
-        self.post_message(SetupSubmitted())
-    
     def action_quit(self):
         """Quit action handler."""
-        self.exit(EXIT_SUCCESS)
+        self.exit()
 
 
 if __name__ == "__main__":
