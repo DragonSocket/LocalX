@@ -1,7 +1,7 @@
 [project]
 name = "localx"
 version = "0.1.0"
-description = "VEGA-CHAT P2P TUI chat application"
+description = "localX P2P TUI chat application"
 requires-python = ">=3.12"
 dependencies = [
     "textual >= 0.47",

@@ -1,1 +1,0 @@
-Implement input field text capture and management in src/ui/screens.py.

@@ -1,1 +1,0 @@
-Implement Task 3.2: Implement NcatTransport using asyncio.subprocess.

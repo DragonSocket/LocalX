@@ -1,1 +1,0 @@
-Write E2E test: Verify App startup and initial screen (SetupScreen) display in tests/e2e.py.

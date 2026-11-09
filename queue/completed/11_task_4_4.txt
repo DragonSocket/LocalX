@@ -1,1 +1,0 @@
-Implement Task 4.4: Implement ChatScreen (Textual UI with color coding: Red, Green, Blue).

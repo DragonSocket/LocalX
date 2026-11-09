@@ -1,1 +1,0 @@
-Define core state structures (history, user info) in src/controller/core.py.

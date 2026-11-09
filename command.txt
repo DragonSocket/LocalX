@@ -1,7 +1,0 @@
-Implement Task 1.2: Define `Storage` Protocol in `src/interfaces.py`. 
-The protocol should include:
-- `async def init(self) -> None`
-- `async def save(self, username: str, message: str) -> None`
-- `async def fetch_history(self, limit: int = 50) -> list[dict]`
-- `async def close(self) -> None`
-The `Storage` protocol should be added alongside the existing `Transport` protocol. Keep the `Transport` protocol intact. Use `typing.Protocol` and `@runtime_checkable`.

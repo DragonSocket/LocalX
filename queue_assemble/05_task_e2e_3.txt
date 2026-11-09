@@ -1,1 +1,0 @@
-Write E2E test: Verify outbound message flow (Input $	o$ Transport) in tests/e2e.py.

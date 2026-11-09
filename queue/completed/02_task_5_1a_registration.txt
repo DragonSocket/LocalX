@@ -1,1 +1,0 @@
-Implement event subscription/unsubscription in src/controller/core.py.

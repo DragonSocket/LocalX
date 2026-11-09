@@ -1,1 +1,0 @@
-Implement Task 1.2: Write Transport Protocol to src/interfaces.py (async def send, async def stream, async def close). Use typing.Protocol and @runtime_checkable.

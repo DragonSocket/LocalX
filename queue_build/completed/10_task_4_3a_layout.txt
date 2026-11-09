@@ -1,1 +1,0 @@
-Create the visual layout and widget tree (compose) for the ChatScreen in src/ui/screens.py using Textual.

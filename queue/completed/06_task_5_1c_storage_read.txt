@@ -1,1 +1,0 @@
-Implement ChatController.get_history using the Storage interface in src/controller/core.py.

@@ -1,1 +1,0 @@
-Implement Task 3.3: Implement NcatTransport in src/transport/ncat.py using asyncio.subprocess.

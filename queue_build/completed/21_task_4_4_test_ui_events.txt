@@ -1,3 +1,0 @@
-Write unit tests for ChatScreen (event emission) in tests/test_ui.py.
-
-CRITICAL: Avoid redundant 'edit' calls. If the file already contains the required tests or if any attempt to 'polish' the file results in an identical content, do NOT retry. Mark the task as completed immediately.

@@ -1,1 +1,0 @@
-Implement message validation logic in src/controller/core.py.

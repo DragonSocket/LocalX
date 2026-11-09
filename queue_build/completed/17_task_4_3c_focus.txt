@@ -1,1 +1,0 @@
-Implement widget focus management and traversal for the ChatScreen in src/ui/screens.py.

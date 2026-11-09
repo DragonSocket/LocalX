@@ -1,1 +1,0 @@
-Implement Task 4.3: Write tests for ChatScreen (verifying MessageSent and log display).

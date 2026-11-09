@@ -1,1 +1,0 @@
-Implement the event dispatching/routing mechanism in src/controller/state.py.
