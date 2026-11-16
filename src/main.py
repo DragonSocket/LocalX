@@ -1,126 +1,232 @@
 import asyncio
 import logging
 import sys
-from src.ui import ChatApp, SetupSubmitted, MessageSent, ChatScreen
-from src.network import NcatManager
-from src.database import SqliteStorage
+from datetime import datetime
+from pathlib import Path
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+from src.core.config import get_config
+from src.core.env_validator import EnvironmentValidator
+from src.core.exceptions import AppError
+from src.core.history import ChatMessage, HistoryManager, Role
+from src.core.network import NetworkEngine
+from src.ui.tui import ChatTUI, STYLE_HISTORY, STYLE_ME, STYLE_SYSTEM, STYLE_THEM
+
 logger = logging.getLogger(__name__)
 
-class ChatController:
-    def __init__(self, app: ChatApp):
-        self.app = app
-        self.transport: NcatManager | None = None
-        self.storage: SqliteStorage | None = None
-        self.username: str = ""
+LOG_FILE = Path(__file__).resolve().parent.parent / "logs" / "localX.log"
 
-    async def start_session(self, ip: str, port: int, username: str):
-        self.username = username
-        self.storage = SqliteStorage(f"chat_{username}.db")
-        await self.storage.init()
 
-        # Режим: если IP '0.0.0.0', запускаем сервер, иначе клиент
-        if ip == "0.0.0.0" or ip == "localhost":
-            cmd = ["ncat", "-l", str(port)]
-            logger.info(f"Starting server on port {port}")
-        else:
-            cmd = ["ncat", ip, str(port)]
-            logger.info(f"Connecting to {ip}:{port}")
+def _now() -> str:
+    return datetime.now().astimezone().strftime("%H:%M:%S")
 
-        self.transport = NcatManager(cmd)
-        await self.transport.start()
 
-        # Загружаем историю
-        history = await self.storage.get_history(limit=50)
-        chat_screen = self.app.screen if isinstance(self.app.screen, ChatScreen) else None
-        
-        # Если мы только перешли на экран чата, нужно дождаться, пока UI будет готов
-        # В Textual это можно сделать через await app.run() или дождаться появления экрана
-        # Но так как мы в асинхронном методе, мы можем просто подождать немного или использовать события.
-        
-        # Попробуем дождаться ChatScreen
-        for _ in range(10):
-            if isinstance(self.app.screen, ChatScreen):
-                break
-            await asyncio.sleep(0.5)
-        
-        if isinstance(self.app.screen, ChatScreen):
-            for msg in reversed(history):
-                self.app.screen.add_message_to_log(msg["username"], msg["message"], is_me=(msg["username"] == self.username))
-            
-            # Запускаем цикл прослушивания потока
-            asyncio.create_task(self._listen_loop())
+def _fmt(sender: str, timestamp: str, content: str) -> str:
+    return f"{timestamp}  {sender}: {content}"
 
-    async def _listen_loop(self):
-        if not self.transport:
+
+class Orchestrator:
+    """Glues config, persistence, transport and the TUI together."""
+
+    def __init__(self, config, history_manager: HistoryManager,
+                 network_engine: NetworkEngine, tui: ChatTUI) -> None:
+        self.config = config
+        self.history = history_manager
+        self.network = network_engine
+        self.tui = tui
+        self.shutdown_event = asyncio.Event()
+        self._incoming_task: asyncio.Task | None = None
+
+    # --------------------------------------------------------------- commands
+    async def handle_input(self, text: str) -> None:
+        """Processes user input from the TUI."""
+        if text in {"/exit", "/quit", "/q"}:
+            logger.info("Exit command received.")
+            await self.shutdown()
             return
+
+        if text == "/help":
+            self.tui.add_system("/exit | /peers | /status | /history [n] | /help")
+            return
+
+        if text == "/status":
+            online = "online" if self.network.peer_online else "offline"
+            queued = self.network.queued_count()
+            self.tui.add_system(
+                f"peer {self.config.node.peer_id} "
+                f"listen {self.config.local.host}:{self.config.local.port} "
+                f"remote {self.config.remote.host}:{self.config.remote.port} "
+                f"state {online}"
+                + (f" ({queued} queued)" if queued else "")
+            )
+            return
+
+        if text == "/peers":
+            peers = ", ".join(sorted(self.network.known_peers)) or "none"
+            self.tui.add_system(f"known peers: {peers}")
+            return
+
+        if text.startswith("/history"):
+            parts = text.split(maxsplit=1)
+            count = 20
+            if len(parts) > 1:
+                if not parts[1].isdigit():
+                    self.tui.add_system("usage: /history [n]")
+                    return
+                count = min(int(parts[1]), 200)
+            tail = [m async for m in self.history.load_history()][-count:]
+            for msg in tail:
+                style = STYLE_ME if msg.role is Role.ME else STYLE_HISTORY
+                self.tui.add_message(style, _fmt(msg.role.value, msg.timestamp, msg.content))
+            return
+
+        msg = ChatMessage(role=Role.ME, timestamp=_now(), content=text)
         try:
-            async for message in self.transport.stream():
-                # Сообщение от ncat. Обычно ncat просто шлет текст.
-                # В нашем протоколе мы не шлем метаданные по сети, только текст.
-                # Поэтому мы считаем, что сообщение пришло от кого-то другого.
-                await self.storage.add_message("Peer", message)
-                if isinstance(self.app.screen, ChatScreen):
-                    self.app.screen.add_message_to_log("Peer", message, is_me=False)
+            await self.history.append_message(msg)
+        except AppError as e:
+            # Own message not persisted — still show it in the transcript.
+            logger.error("History write failed for outgoing message: %s", e)
+            self.tui.add_system(f"history write failed: {e}")
+        self.tui.add_message(STYLE_ME, _fmt("me", msg.timestamp, msg.content))
+
+        try:
+            result = await self.network.send_message(text)
+            if result == "queued":
+                self.tui.add_system("peer offline — message queued, sent on reconnect")
+        except AppError as e:
+            self.tui.add_system(f"failed to send: {e}")
+        except Exception as e:  # transport hiccup should not kill the app
+            logger.error("Unexpected send failure: %s", e)
+            self.tui.add_system(f"failed to send: {e}")
+
+    # -------------------------------------------------------------- incoming
+    async def _process_incoming(self) -> None:
+        """Consumes envelopes from the network queue and renders them."""
+        try:
+            async for envelope in self.network.listen():
+                if self.shutdown_event.is_set():
+                    break
+
+                msg = ChatMessage(role=Role.THEM, timestamp=_now(), content=envelope.payload)
+                try:
+                    await self.history.append_message(msg)
+                except AppError as e:
+                    # Persistence failure must not kill the live transcript:
+                    # keep rendering incoming messages, warn the user.
+                    logger.error("History write failed for incoming message: %s", e)
+                    self.tui.add_system(f"history write failed: {e}")
+                self.tui.add_message(STYLE_THEM, _fmt(envelope.sender_id, msg.timestamp, msg.content))
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            logger.error(f"Listen loop error: {e}")
+            logger.error("Incoming stream error: %s", e)
+            self.tui.add_system(f"incoming stream error: {e}")
+
+    async def _error_reporter(self) -> None:
+        """Relay connection problems into the transcript (once per unique error)."""
+        last_reported: str | None = None
+        while not self.shutdown_event.is_set():
+            error = self.network.last_error
+            if error and error != last_reported:
+                last_reported = error
+                self.tui.add_system(error)
+            elif error is None:
+                last_reported = None
+            await asyncio.sleep(2)
+
+    # -------------------------------------------------------------- lifecycle
+    async def shutdown(self) -> None:
+        if self.shutdown_event.is_set():
+            return
+
+        self.shutdown_event.set()
+        logger.info("Initiating graceful shutdown...")
+
+        await self.network.stop()
+        await self.history.shutdown()
+
+        if self._incoming_task is not None:
+            self._incoming_task.cancel()
+
+        if self.tui.app is not None and getattr(self.tui.app, "is_running", False):
+            try:
+                self.tui.app.exit()
+            except Exception:
+                pass
+
+        logger.info("Shutdown complete.")
+
+    async def run(self) -> None:
+        self._incoming_task = asyncio.create_task(self._process_incoming())
+        reporter = asyncio.create_task(self._error_reporter())
+
+        try:
+            await self.tui.run()
+        except Exception as e:
+            logger.error("Unhandled exception in main loop: %s", e)
         finally:
-            logger.info("Listen loop stopped.")
+            await self.shutdown()
+            reporter.cancel()
+            try:
+                await reporter
+            except asyncio.CancelledError:
+                pass
+            if self._incoming_task is not None:
+                self._incoming_task.cancel()
+                try:
+                    await self._incoming_task
+                except asyncio.CancelledError:
+                    pass
 
-    async def handle_message_sent(self, message: str):
-        if not self.transport or not self.storage:
-            return
-        
-        try:
-            # 1. Отправляем по сети
-            await self.transport.send(message)
-            # 2. Сохраняем у себя
-            await self.storage.add_message(self.username, message)
-            # 3. Отображаем у себя
-            if isinstance(self.app.screen, ChatScreen):
-                self.app.screen.add_message_to_log(self.username, message, is_me=True)
-        except Exception as e:
-            logger.error(f"Error handling sent message: {e}")
 
-    async def shutdown(self):
-        if self.transport:
-            await self.transport.close()
-        if self.storage:
-            await self.storage.close()
-
-async def main():
-    app = ChatApp()
-    controller = ChatController(app)
-
-    # Перехватываем события приложения для управления логикой
-    # В Textual мы можем переопределить обработчики в самом приложении или слушать внешне.
-    # Здесь мы добавим хуки прямо в app через monkeypatching или subclassing.
-    
-    original_on_setup_submitted = app.on_setup_submitted
-    async def new_on_setup_submitted(event: SetupSubmitted):
-        await original_on_setup_submitted(event)
-        await controller.start_session(event.ip, event.port, event.username)
-    
-    app.on_setup_submitted = new_on_setup_submitted
-
-    original_on_message_sent = app.on_message_sent
-    async def new_on_message_sent(event: MessageSent):
-        await original_on_message_sent(event)
-        await controller.handle_message_sent(event.message)
-    
-    app.on_message_sent = new_on_message_sent
+async def main() -> None:
+    # Logs go to a file: writing to stderr would corrupt the full-screen TUI.
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        filename=str(LOG_FILE),
+    )
 
     try:
-        await app.run()
+        config = get_config()
+
+        validator = EnvironmentValidator()
+        await validator.verify_environment()
+
+        history = HistoryManager(config.storage.history_file)
+        await history.initialize()
+
+        network = NetworkEngine()
+        await network.start(config)
+
+        tui = ChatTUI(
+            status_provider=lambda: (
+                network.remote_peer_id or f"{config.remote.host}:{config.remote.port}",
+                network.peer_online,
+            )
+        )
+        orchestrator = Orchestrator(config, history, network, tui)
+        tui.orchestrator = orchestrator
+
+        tui.add_system(
+            f"peer '{config.node.peer_id}' listening on "
+            f"{config.local.host}:{config.local.port}, "
+            f"connecting to {config.remote.host}:{config.remote.port} "
+            f"(PageUp/PageDown to scroll, /help for commands)"
+        )
+
+        for msg in [m async for m in history.load_history()][-200:]:
+            style = STYLE_ME if msg.role is Role.ME else STYLE_HISTORY
+            tui.add_message(style, _fmt(msg.role.value, msg.timestamp, msg.content))
+
+        await orchestrator.run()
+
+    except AppError as e:
+        print(f"FATAL: {e}", file=sys.stderr)
+        sys.exit(1)
     except KeyboardInterrupt:
-        pass
-    finally:
-        await controller.shutdown()
+        print("Interrupted.", file=sys.stderr)
+
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        sys.exit(0)
+    asyncio.run(main())

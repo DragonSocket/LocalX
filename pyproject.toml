@@ -1,20 +1,35 @@
 [project]
 name = "localx"
 version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
-authors = [
-    { name = "Blastmerder", email = "stepapstear.stepa@yandex.ru" }
-]
+description = "localX P2P TUI chat application"
 requires-python = ">=3.12"
 dependencies = [
-    "aiosqlite>=0.22.1",
-    "textual>=8.2.8",
+    "prompt-toolkit >= 3.0",
+    "portalocker >= 2.7",
+    "pydantic >= 2.0",
 ]
 
-[project.scripts]
-localx = "localx:main"
+[project.optional-dependencies]
+dev = [
+    "pytest >= 8.0",
+    "pytest-asyncio >= 0.23",
+    "pyte >= 0.8",
+]
+
+[dependency-groups]
+dev = [
+    "pytest >= 8.0",
+    "pytest-asyncio >= 0.23",
+    "pyte >= 0.8",
+]
 
 [build-system]
-requires = ["uv_build>=0.13.1,<0.14.0"]
-build-backend = "uv_build"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

@@ -1,0 +1,23 @@
+# localX — P2P ncat chat configuration
+#
+# Every peer runs two ncat processes:
+#   listener  : ncat -l -k <local.host> <local.port>   (receives peers)
+#   connector : ncat <remote.host> <remote.port>       (sends to the peer)
+#
+# To run two peers on one machine, mirror the ports via env overrides:
+#   peer A: LOCALX_NODE_PEER_ID=alice LOCALX_LOCAL_PORT=9001 LOCALX_REMOTE_PORT=9002
+#   peer B: LOCALX_NODE_PEER_ID=bob   LOCALX_LOCAL_PORT=9002 LOCALX_REMOTE_PORT=9001
+
+[node]
+peer_id = "alice"
+
+[local]
+host = "127.0.0.1"
+port = 9001
+
+[remote]
+host = "127.0.0.1"
+port = 9002
+
+[storage]
+history_file = "chat_history.jsonl"

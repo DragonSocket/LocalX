@@ -8,3 +8,10 @@ wheels/
 
 # Virtual environments
 .venv
+
+chat_celovek.jsonl
+config.toml
+
+# Runtime artifacts
+logs/
+*.jsonl
