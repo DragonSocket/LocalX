@@ -93,6 +93,18 @@ Type a message in either terminal and it appears in the other one.
 - Commands: `/help`, `/status`, `/peers`, `/history [n]`, `/exit`
 - `Ctrl+C` / `Ctrl+D` exits.
 
+## Scrolling the transcript
+
+| Action | Effect |
+|---|---|
+| `PageUp` / `PageDown` | move through history one page at a time |
+| `Ctrl+Home` / `Ctrl+End` | jump to the oldest / newest line |
+| mouse wheel | three lines per notch over the transcript |
+
+Incoming messages are rendered immediately, even while scrolled up — the status
+line shows `N new below` and `PageDown` returns you to the tail. Sending a
+message resets the scroll offset.
+
 ## Architecture
 
 ```
