@@ -31,6 +31,43 @@ def test_max_scroll_zero_when_buffer_shorter_than_screen() -> None:
     assert tui._max_scroll() == 0
 
 
+def rendered_texts(tui: ChatTUI) -> list[str]:
+    return [text for _, text in tui._render_transcript()]
+
+
+def test_newest_line_survives_when_screen_is_full() -> None:
+    """Regression: the indicator row used to eat the LAST line, so the newest
+    message stayed invisible until the next one pushed it up."""
+    tui = make_tui(rows=10, cols=20)
+    fill(tui, 25)
+    lines = rendered_texts(tui)
+    assert len(lines) == 10
+    assert "line-24" in lines[-1]
+    assert any("above" in line for line in lines[:1])
+    # nothing newer than the newest buffer line may be missing
+    assert "line-23" in "".join(lines)
+
+
+def test_newest_line_survives_with_below_hint() -> None:
+    tui = make_tui(rows=10, cols=20)
+    fill(tui, 25)
+    tui._scroll = 5
+    tui._unread = 3
+    lines = rendered_texts(tui)
+    assert len(lines) == 10
+    assert "line-19" in lines[-2]  # newest visible content line
+    assert "below" in lines[-1]
+
+
+def test_view_never_shows_more_rows_than_the_screen() -> None:
+    for rows in (3, 5, 10, 24):
+        tui = make_tui(rows=rows, cols=20)
+        fill(tui, 50)
+        tui._scroll = tui._max_scroll() // 2
+        tui._unread = 4
+        assert len(rendered_texts(tui)) <= rows
+
+
 def test_scroll_corrected_when_buffer_trims_from_top() -> None:
     """Dropping old lines must shift the manual offset, not blank the view."""
     tui = make_tui(rows=10, cols=20)

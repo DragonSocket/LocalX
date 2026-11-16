@@ -224,16 +224,24 @@ class ChatTUI:
         total = len(lines)
 
         end = max(0, total - self._scroll)
-        start = max(0, end - rows)
+
+        # Indicators ("... above", "... below") take rows from the transcript.
+        # Reserve them from the TOP so the newest line is never clipped: slicing
+        # `visible[:rows - 1]` would drop the last line, hiding the message the
+        # user just sent until the next one pushes it up.
+        above = 1 if end > rows else 0
+        below = 1 if (self._unread and self._scroll > 0) else 0
+        take = max(0, rows - above - below)
+        start = max(0, end - take)
         visible = lines[start:end]
 
         if start > 0:
             marker = (STYLE_DIM, f"  ... {start} line(s) above (PageUp)")
-            visible = [marker] + visible[: max(0, rows - 1)]
+            visible = [marker] + visible
 
-        if self._unread and self._scroll > 0:
+        if below:
             hint = (STYLE_DIM, f"  ... {self._unread} new line(s) below (PageDown)")
-            visible = visible[: max(0, rows - 1)] + [hint]
+            visible = visible + [hint]
 
         if not visible:
             return FormattedText([])

@@ -20,5 +20,8 @@
 - [x] Полный аудит логики приложения: `AUDIT.md` — 4 проблемы высокой критичности (`_max_scroll` off-by-one, смерть incoming-consumer при ошибке истории, stale `_known_peers`/`peer_online`, обрезка буфера без корректировки `_scroll`), 7 средних, 8 мелких.
 - [x] Все 19 пунктов аудита исправлены: честный `_peers_by_source` (peer забывается вместе со stream'ом), exponential backoff reconnect, line-by-line `_flush_outbox` с сохранением хвоста, повторный flush перед каждым send, outbox drop-oldest, drain- grace для `_read_stream` при остановке, `LOG_FILE`/`config.toml` резолвятся от проекта, уникальный дефолт `peer_id = USER-pid`, warning на self-echo, удаление мёртвого кода (`NetworkProcessError`, `_error_event`). Тесты: `tests/test_network_peers.py` — **25 passed**.
 
+- [x] Визуальный баг «первое сообщение не отправляется»: `_render_transcript` срезал **последнюю** строку при наличии маркера/подсказки (`visible[:rows - 1]`), поэтому новая строка оказывалась за нижней границей и становилась видна только после следующего Enter. Маркеры теперь резервируют строки сверху, newest line всегда видна. Проверка: OLD vs NEW рендер (25 строк / 10 рядов: `line-24` отсутствовал → теперь виден), pyte-пробы 10x40/24x80, регрессии в `tests/test_tui_scroll.py` — **6 passed**, полный `pytest` — **28 passed**, `scripts/e2e_two_peers.py` — **E2E OK**.
+
 ## Следующие шаги
 - [ ] Улучшение UI-ready детекции в e2e (ANSI-шум в потоке).
+- [ ] Косметика: в узких терминалах системные сообщения разбиваются по словам и вытесняют содержимое — стоит ограничивать длину системных строк.
