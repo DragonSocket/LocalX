@@ -17,6 +17,7 @@
 - [x] `tests/` — pytest: config (migration/env/валидация), envelope, history (deadlock-fix, батчи, shutdown). **15 passed**.
 - [x] Колесо мыши: SGR-нотчи (`\x1b[<4/5;..M`) транслируются в `Ctrl+Up/Down` через патч `KeyProcessor.feed_multiple` — скроллит в любой точке экрана. `scripts/scroll_probe.py`: **SCROLL PROBE OK** (24x80 и 12x40).
 - [x] Статус-строка: в узких терминалах имя peer'а уходит первым, индикатор `[↑ N]` / счётчик unread не обрезается.
+- [x] Полный аудит логики приложения: `AUDIT.md` — 4 проблемы высокой критичности (`_max_scroll` off-by-one, смерть incoming-consumer при ошибке истории, stale `_known_peers`/`peer_online`, обрезка буфера без корректировки `_scroll`), 7 средних, 8 мелких.
 
 ## Следующие шаги
 - [ ] `peers`-команда: реальный список подключённых peer'ов из handshake.
