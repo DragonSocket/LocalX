@@ -31,6 +31,7 @@ class HistoryManager:
         self.flush_interval = flush_interval
         self._buffer: List[ChatMessage] = []
         self._lock = threading.Lock()
+        self._buffer_lock = asyncio.Lock()
         self._file_lock_name = f"{file_path}.lock"
         self._executor = None
         self._loop = None
@@ -77,9 +78,9 @@ class HistoryManager:
 
     async def append_message(self, message: ChatMessage) -> None:
         """Adds message to buffer and flushes if batch_size is reached."""
-        async with asyncio.Lock(): # Protect the buffer itself
+        async with self._buffer_lock:
             self._buffer.append(message)
-            if len(self._buffer) >= self_batch_size():
+            if len(self._buffer) >= self.batch_size:
                 await self.flush()
 
     def _batch_size(self) -> int:
@@ -87,7 +88,7 @@ class HistoryManager:
 
     async def flush(self) -> None:
         """Writes the buffer to disk."""
-        async with asyncio.Lock():
+        async with self._buffer_lock:
             if not self._buffer:
                 return
 

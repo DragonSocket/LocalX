@@ -4,8 +4,9 @@ version = "0.1.0"
 description = "localX P2P TUI chat application"
 requires-python = ">=3.12"
 dependencies = [
-    "textual >= 0.47",
-    "aiosqlite >= 0.20",
+    "prompt-toolkit >= 3.0",
+    "portalocker >= 2.7",
+    "pydantic >= 2.0",
 ]
 
 [project.optional-dependencies]

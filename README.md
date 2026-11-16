@@ -1,63 +1,112 @@
-# LocalX Chat CLI
+# localX — P2P ncat chat
 
-A robust, asynchronous Text User Interface (TUI) client for `ncat`, designed for secure and efficient persistent chat sessions.
+A full-screen TUI chat where **each peer is both a server and a client**. There is no
+central server: two (or more) localX instances talk directly over `ncat`.
 
-## Features
+## How the transport works
 
-- **TUI Interface**: Full-screen terminal interface with a scrollable chat buffer and a dedicated input area.
-- **Persistent History**: Automatically saves and loads chat history using a high-performance JSONL format.
-- **Async-First**: Built on `asyncio` to ensure the UI remains responsive even during heavy network or disk I/O.
-- **Robustness**: Handles process management (ncat) and file locking (portalocker) with a focus on avoiding deadlocks and zombie processes.
-- **Configurable**: Easy setup via `config.toml`.
+Every peer runs two `ncat` processes managed by `NetworkEngine`:
+
+| Role      | Command                         | Purpose                              |
+|-----------|---------------------------------|--------------------------------------|
+| Listener  | `ncat -l -k <local.host> <local.port>` | Accepts peers, reads their messages |
+| Connector | `ncat <remote.host> <remote.port>`     | Sends this peer's messages, auto-reconnects |
+
+Either side can start first — the connector retries until the peer's listener is up.
+
+Messages are one JSON object per line:
+
+```json
+{"sender_id": "alice", "payload": "hi", "kind": "message", "version": 1}
+```
+
+`kind` is `hello` (handshake, not shown in the transcript) or `message`.
+Self-echoes are dropped: the listener broadcasts its stdin to all clients, so a
+copy of an outgoing line can come back on another stream.
 
 ## Prerequisites
 
-- **Python 3.11+**
-- **ncat** (part of the Nmap project)
-- **uv** (recommended for dependency management)
+- Python 3.12+
+- `ncat` (Nmap project), version 7.0+
+- `uv`
 
-## Installation & Setup
-
-1. **Clone the repository** (or navigate to the directory).
-
-2. **Set up a virtual environment**:
-   ```bash
-   uv venv
-   source .venv/bin/activate
-   ```
-
-3. **Install dependencies**:
-   ```bash
-   uv pip install pydantic portalocker prompt_toolkit
-   ```
-
-4. **Configure the connection**:
-   Edit the `config.toml` file to specify the IP address and port of the remote `ncat` peer.
-   ```toml
-   [connection]
-   host = "127.0.0.1"
-   port = 1234
-
-   [storage]
-   history_file = "chat_history.jsonl"
-   ```
-
-## Running the Application
-
-To start the chat, run the following command from the project root:
+## Install
 
 ```bash
-export PYTHONPATH=$PYTHONPATH:$(pwd)/src
-python3 src/main.py
+uv venv
+uv sync
 ```
+
+## Configuration
+
+`config.toml` uses four sections:
+
+```toml
+[node]
+peer_id = "alice"
+
+[local]
+host = "127.0.0.1"
+port = 9001
+
+[remote]
+host = "127.0.0.1"
+port = 9002
+
+[storage]
+history_file = "chat_history.jsonl"
+```
+
+Environment variables override the file (useful for running two peers locally):
+
+| Variable | Section/key |
+|---|---|
+| `LOCALX_NODE_PEER_ID` | `node.peer_id` |
+| `LOCALX_LOCAL_HOST` | `local.host` |
+| `LOCALX_LOCAL_PORT` | `local.port` |
+| `LOCALX_REMOTE_HOST` | `remote.host` |
+| `LOCALX_REMOTE_PORT` | `remote.port` |
+| `LOCALX_STORAGE_HISTORY_FILE` | `storage.history_file` |
+
+An old single-sided `[connection]` block is migrated to `[remote]`/`[local]`
+automatically.
+
+## Running two peers locally
+
+```bash
+# terminal 1
+LOCALX_NODE_PEER_ID=alice LOCALX_LOCAL_PORT=9001 LOCALX_REMOTE_PORT=9002 \
+  LOCALX_STORAGE_HISTORY_FILE=history_alice.jsonl \
+  uv run python src/main.py
+
+# terminal 2
+LOCALX_NODE_PEER_ID=bob LOCALX_LOCAL_PORT=9002 LOCALX_REMOTE_PORT=9001 \
+  LOCALX_STORAGE_HISTORY_FILE=history_bob.jsonl \
+  uv run python src/main.py
+```
+
+Type a message in either terminal and it appears in the other one.
 
 ## Usage
 
-- **Chatting**: Simply type your message in the bottom input field and press `Enter`.
-- **Commands**:
-    - `/exit` — Gracefully closes the connection and exits the application.
-- **Navigation**: Use your mouse or arrow keys to scroll through the chat history.
+- Type a message and press `Enter`.
+- Commands: `/help`, `/status`, `/peers`, `/history [n]`, `/exit`
+- `Ctrl+C` / `Ctrl+D` exits.
 
-## Architecture Note
+## Architecture
 
-The application is split into a **Core** (logic, network, history) and a **Shell** (TUI). The Core logic is decoupled from the Terminal interface, making it easy to integrate into other environments (e.g., as a library or a background service).
+```
+src/
+  main.py            orchestrator: wires config, history, network, TUI
+  core/
+    config.py        TOML + env loading, validation, legacy migration
+    network.py       dual-mode ncat engine, reconnects, envelope protocol
+    history.py       JSONL persistence with portalocker and batching
+    env_validator.py startup audit of ncat and Python deps
+    exceptions.py    typed error hierarchy
+  ui/
+    tui.py           prompt_toolkit full-screen chat surface
+```
+
+The core is decoupled from the terminal: `NetworkEngine` and `HistoryManager`
+are plain async classes usable as a library or behind another frontend.
