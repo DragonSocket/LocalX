@@ -99,7 +99,8 @@ Type a message in either terminal and it appears in the other one.
 |---|---|
 | `PageUp` / `PageDown` | move through history one page at a time |
 | `Ctrl+Home` / `Ctrl+End` | jump to the oldest / newest line |
-| mouse wheel | three lines per notch over the transcript |
+| mouse wheel | three lines per notch — works anywhere on the screen |
+| `Ctrl+Up` / `Ctrl+Down` | same three-line step, for terminals without mouse reporting |
 
 Incoming messages are rendered immediately, even while scrolled up — the status
 line shows `N new below` and `PageDown` returns you to the tail. Sending a

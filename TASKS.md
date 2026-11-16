@@ -15,6 +15,8 @@
 - [x] Offline-queue: сообщения в `_outbox` (max 200), флеш при reconnect — **`scripts/reconnect_test.py`: RECONNECT/OUTBOX TEST OK**.
 - [x] Hang на `/exit` устранён: 30+ сообщений → exit code 0 за 1 с, history полностью flush'ится.
 - [x] `tests/` — pytest: config (migration/env/валидация), envelope, history (deadlock-fix, батчи, shutdown). **15 passed**.
+- [x] Колесо мыши: SGR-нотчи (`\x1b[<4/5;..M`) транслируются в `Ctrl+Up/Down` через патч `KeyProcessor.feed_multiple` — скроллит в любой точке экрана. `scripts/scroll_probe.py`: **SCROLL PROBE OK** (24x80 и 12x40).
+- [x] Статус-строка: в узких терминалах имя peer'а уходит первым, индикатор `[↑ N]` / счётчик unread не обрезается.
 
 ## Следующие шаги
 - [ ] `peers`-команда: реальный список подключённых peer'ов из handshake.

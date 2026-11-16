@@ -8,6 +8,8 @@ Layout:
 Scrolling:
   PageUp / PageDown — move through history, Ctrl+Home/End jump to top/bottom.
   Mouse wheel — scroll three lines per notch over the transcript.
+  Ctrl+Up / Ctrl+Down — same three-line step, for terminals without mouse
+  reporting.
   The scroll offset resets when you send a message.
 """
 
@@ -20,16 +22,11 @@ from typing import Callable, Optional
 from prompt_toolkit import Application
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.key_binding.bindings import mouse as _pt_mouse_bindings
+from prompt_toolkit.key_binding.key_processor import KeyPress, KeyProcessor
+from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout.containers import HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.layout import Layout
-from prompt_toolkit.mouse_events import (
-    MouseButton,
-    MouseModifier,
-    MouseEvent,
-    MouseEventType,
-)
 from prompt_toolkit.widgets import TextArea
 
 MAX_BUFFER_LINES = 1000
@@ -44,60 +41,56 @@ STYLE_OFFLINE = "ansibrightred"
 
 WHEEL_STEP = 3  # transcript lines per mouse-wheel notch
 
-_MOD_BITS = {
-    0: frozenset(),
-    4: frozenset({MouseModifier.SHIFT}),
-    8: frozenset({MouseModifier.ALT}),
-    12: frozenset({MouseModifier.SHIFT, MouseModifier.ALT}),
-    16: frozenset({MouseModifier.CONTROL}),
-    20: frozenset({MouseModifier.SHIFT, MouseModifier.CONTROL}),
-    24: frozenset({MouseModifier.ALT, MouseModifier.CONTROL}),
-    28: frozenset({MouseModifier.SHIFT, MouseModifier.ALT, MouseModifier.CONTROL}),
-}
+# xterm SGR wheel codes: 4 = wheel up, 5 = wheel down, plus modifier bits
+# (shift 4, alt 8, control 16). 64/65 are the older scroll-wheel convention.
+_WHEEL_UP = {4, 8, 12, 16, 20, 24, 28, 64}
+_WHEEL_DOWN = {5, 9, 13, 17, 21, 25, 29, 65}
 
 
-def _patch_wheel_codes() -> None:
-    """Teach prompt_toolkit the real xterm SGR wheel codes.
+def _wheel_notch(data: str) -> Optional[int]:
+    """Return +1 / -1 for a wheel notch, `None` for any other mouse event."""
+    if not data.startswith("\x1b[<"):
+        return None
+    try:
+        code = int(data[len("\x1b[<"):].split(";")[0])
+    except ValueError:
+        return None
+    if code in _WHEEL_UP:
+        return 1
+    if code in _WHEEL_DOWN:
+        return -1
+    return None
 
-    Terminals report wheel notches as `ESC [ < 4 ; x ; y M` (up) and
-    `ESC [ < 5 ; x ; y M` (down). prompt_toolkit 3.0.53 maps 4/5 to
-    "shift + left/middle click" and expects scroll at 64/65, so the wheel
-    never reaches any scroll handler. Re-map 4/5 (plus modifier variants)
-    onto SCROLL_UP / SCROLL_DOWN; the 64/65 entries are left in place for
-    terminals that use them.
+
+def _patch_wheel_feed() -> None:
+    """Turn incoming wheel notches into Ctrl+Up/Ctrl+Down key presses.
+
+    prompt_toolkit dispatches mouse events to the control under the pointer,
+    so a notch over the status line or the input field never reaches the
+    transcript. Translating the notch before it is queued makes the wheel
+    work wherever the pointer is and reuses the keyboard path that the tests
+    already cover.
     """
-    table = _pt_mouse_bindings.xterm_sgr_mouse_events
-    for base, event_type in (
-        (4, MouseEventType.SCROLL_UP),
-        (5, MouseEventType.SCROLL_DOWN),
-    ):
-        for bits in _MOD_BITS:
-            table[(base + bits, "M")] = (MouseButton.NONE, event_type, _MOD_BITS[bits])
+    original = KeyProcessor.feed_multiple
+
+    def feed_multiple(
+        self: KeyProcessor, key_presses: list[KeyPress], first: bool = False
+    ) -> None:
+        translated: list[KeyPress] = []
+        for press in key_presses:
+            if press.key == Keys.Vt100MouseEvent:
+                notch = _wheel_notch(press.data)
+                if notch:
+                    key = Keys.ControlUp if notch > 0 else Keys.ControlDown
+                    translated.append(KeyPress(key))
+                    continue
+            translated.append(press)
+        original(self, translated, first=first)
+
+    KeyProcessor.feed_multiple = feed_multiple
 
 
-_patch_wheel_codes()
-
-
-class TranscriptControl(FormattedTextControl):
-    """Transcript surface that also handles mouse-wheel scrolling.
-
-    prompt_toolkit routes mouse events to the control covering the clicked
-    cell. `FormattedTextControl` only looks for per-fragment handlers, so a
-    wheel event would fall through to the generic `Window` scroll, which
-    conflicts with the manual tail rendering this TUI uses. Handling it here
-    keeps keyboard and wheel scrolling on the same `_scroll` state.
-    """
-
-    def __init__(self, text: Callable[[], FormattedText], scroll: Callable[[int], None]) -> None:
-        super().__init__(text=text)
-        self._scroll = scroll
-
-    def mouse_handler(self, mouse_event: MouseEvent) -> "NotImplementedOrNone":
-        if mouse_event.event_type == MouseEventType.SCROLL_UP:
-            return self._scroll(WHEEL_STEP)
-        if mouse_event.event_type == MouseEventType.SCROLL_DOWN:
-            return self._scroll(-WHEEL_STEP)
-        return NotImplemented
+_patch_wheel_feed()
 
 
 class ChatTUI:
@@ -124,7 +117,7 @@ class ChatTUI:
 
         # Transcript takes all remaining rows; lines are pre-wrapped by us.
         self.output_window = Window(
-            content=TranscriptControl(self._render_transcript, self._scroll_by),
+            content=FormattedTextControl(text=self._render_transcript),
             style="class:ChatTranscript",
         )
 
@@ -246,16 +239,31 @@ class ChatTUI:
             return FormattedText([])
         return FormattedText([(style, text + "\n") for style, text in visible])
 
+    def _status_width(self) -> int:
+        """Columns available for the status line."""
+        try:
+            return max(20, self.app.output.get_size().columns)
+        except Exception:
+            return 80
+
     def _render_status(self) -> FormattedText:
         peer, online = self.status_provider() if self.status_provider else ("peer", False)
         state = "ONLINE" if online else "OFFLINE"
         style = STYLE_ONLINE if online else STYLE_OFFLINE
-        parts: list[tuple[str, str]] = [("bold", " localX "), ("", f" peer: {peer} "), (style, state)]
+
+        parts: list[tuple[str, str]] = [("bold", " localX "), (style, state)]
         if self._scroll > 0:
             indicator = f"  [↑ {self._scroll}]"
             if self._unread:
-                indicator += f" {self._unread} new below"
+                indicator += f"  {self._unread} new below"
             parts.append(("ansibrightblack", indicator))
+
+        # Narrow terminals drop the peer name first: the scroll indicator and
+        # the unread counter must never be clipped off the end of the line.
+        peer_part = f" peer: {peer} "
+        used = sum(len(text) for _, text in parts)
+        if used + len(peer_part) <= self._status_width():
+            parts.insert(1, ("", peer_part))
         return FormattedText(parts)
 
     # --------------------------------------------------------------- buffer ops
