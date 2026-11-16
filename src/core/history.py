@@ -81,7 +81,8 @@ class HistoryManager:
         async with self._buffer_lock:
             self._buffer.append(message)
             if len(self._buffer) >= self.batch_size:
-                await self.flush()
+                # NOTE: flush() re-acquires _buffer_lock, which would deadlock.
+                await self._flush_locked()
 
     def _batch_size(self) -> int:
         return self.batch_size
@@ -89,19 +90,23 @@ class HistoryManager:
     async def flush(self) -> None:
         """Writes the buffer to disk."""
         async with self._buffer_lock:
-            if not self._buffer:
-                return
+            await self._flush_locked()
 
-            to_write = list(self._buffer)
-            self._buffer.clear()
+    async def _flush_locked(self) -> None:
+        """Must be called while _buffer_lock is held."""
+        if not self._buffer:
+            return
 
-            try:
-                await self._loop.run_in_executor(self._executor, self._sync_flush, to_write)
-            except Exception as e:
-                # If write fails, we might have lost messages in this batch
-                # In a real app, we might retry or move to a dead-letter file
-                logger.error(f"Flush failed: {e}")
-                raise HistoryWriteError(f"Failed to flush history to disk: {e}")
+        to_write = list(self._buffer)
+        self._buffer.clear()
+
+        try:
+            await self._loop.run_in_executor(self._executor, self._sync_flush, to_write)
+        except Exception as e:
+            # If write fails, we might have lost messages in this batch.
+            # In a real app, we might retry or move to a dead-letter file.
+            logger.error(f"Flush failed: {e}")
+            raise HistoryWriteError(f"Failed to flush history to disk: {e}")
 
     def _sync_flush(self, messages: List[ChatMessage]) -> None:
         """Synchronous write operation to be run in executor."""

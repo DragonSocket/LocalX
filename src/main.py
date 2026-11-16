@@ -2,19 +2,26 @@ import asyncio
 import logging
 import sys
 from datetime import datetime
+from pathlib import Path
 
 from src.core.config import get_config
 from src.core.env_validator import EnvironmentValidator
 from src.core.exceptions import AppError
 from src.core.history import ChatMessage, HistoryManager, Role
-from src.core.network import Envelope, NetworkEngine, NetworkState
+from src.core.network import NetworkEngine
 from src.ui.tui import ChatTUI, STYLE_HISTORY, STYLE_ME, STYLE_SYSTEM, STYLE_THEM
 
 logger = logging.getLogger(__name__)
 
+LOG_FILE = Path("logs") / "localX.log"
+
 
 def _now() -> str:
     return datetime.now().astimezone().strftime("%H:%M:%S")
+
+
+def _fmt(sender: str, timestamp: str, content: str) -> str:
+    return f"{timestamp}  {sender}: {content}"
 
 
 class Orchestrator:
@@ -38,54 +45,48 @@ class Orchestrator:
             return
 
         if text == "/help":
-            await self.tui.add_message(
-                STYLE_SYSTEM,
-                "[ SYSTEM ] /exit | /peers | /status | /history [n] | /help",
-            )
+            self.tui.add_system("/exit | /peers | /status | /history [n] | /help")
             return
 
         if text == "/status":
-            await self.tui.add_message(
-                STYLE_SYSTEM,
-                f"[ SYSTEM ] peer={self.config.node.peer_id} "
-                f"listen={self.config.local.host}:{self.config.local.port} "
-                f"remote={self.config.remote.host}:{self.config.remote.port} "
-                f"state={self.network.state.value}",
+            online = "online" if self.network.peer_online else "offline"
+            queued = self.network.queued_count()
+            self.tui.add_system(
+                f"peer {self.config.node.peer_id} "
+                f"listen {self.config.local.host}:{self.config.local.port} "
+                f"remote {self.config.remote.host}:{self.config.remote.port} "
+                f"state {online}"
+                + (f" ({queued} queued)" if queued else "")
             )
             return
 
         if text == "/peers":
             peers = ", ".join(sorted(self.network.known_peers)) or "none"
-            await self.tui.add_message(STYLE_SYSTEM, f"[ SYSTEM ] known peers: {peers}")
+            self.tui.add_system(f"known peers: {peers}")
             return
 
         if text.startswith("/history"):
-            count = 20
-            arg = text.split(maxsplit=1)[1] if len(text.split(maxsplit=1)) > 1 else ""
-            if arg.isdigit():
-                count = int(arg)
+            parts = text.split(maxsplit=1)
+            count = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 20
             tail = [m async for m in self.history.load_history()][-count:]
             for msg in tail:
-                style = STYLE_ME if msg.role is Role.ME else STYLE_THEM
-                await self.tui.add_message(style, f"[ {msg.role.value} {msg.timestamp} ] {msg.content}")
+                style = STYLE_ME if msg.role is Role.ME else STYLE_HISTORY
+                self.tui.add_message(style, _fmt(msg.role.value, msg.timestamp, msg.content))
             return
 
-        msg = ChatMessage(
-            role=Role.ME,
-            timestamp=_now(),
-            content=text,
-        )
-
+        msg = ChatMessage(role=Role.ME, timestamp=_now(), content=text)
         await self.history.append_message(msg)
-        await self.tui.add_message(STYLE_ME, f"[ ME {msg.timestamp} ] {msg.content}")
+        self.tui.add_message(STYLE_ME, _fmt("me", msg.timestamp, msg.content))
 
         try:
-            await self.network.send_message(text)
+            result = await self.network.send_message(text)
+            if result == "queued":
+                self.tui.add_system("peer offline — message queued, sent on reconnect")
         except AppError as e:
-            await self.tui.add_message(STYLE_SYSTEM, f"[ SYSTEM ] Failed to send: {e}")
+            self.tui.add_system(f"failed to send: {e}")
         except Exception as e:  # transport hiccup should not kill the app
             logger.error("Unexpected send failure: %s", e)
-            await self.tui.add_message(STYLE_SYSTEM, f"[ SYSTEM ] Failed to send: {e}")
+            self.tui.add_system(f"failed to send: {e}")
 
     # -------------------------------------------------------------- incoming
     async def _process_incoming(self) -> None:
@@ -95,16 +96,9 @@ class Orchestrator:
                 if self.shutdown_event.is_set():
                     break
 
-                msg = ChatMessage(
-                    role=Role.THEM,
-                    timestamp=_now(),
-                    content=envelope.payload,
-                )
+                msg = ChatMessage(role=Role.THEM, timestamp=_now(), content=envelope.payload)
                 await self.history.append_message(msg)
-                await self.tui.add_message(
-                    STYLE_THEM,
-                    f"[ {envelope.sender_id} {msg.timestamp} ] {msg.content}",
-                )
+                self.tui.add_message(STYLE_THEM, _fmt(envelope.sender_id, msg.timestamp, msg.content))
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -112,13 +106,15 @@ class Orchestrator:
             self.tui.add_system(f"incoming stream error: {e}")
 
     async def _error_reporter(self) -> None:
-        """Relay connection problems into the transcript."""
+        """Relay connection problems into the transcript (once per unique error)."""
         last_reported: str | None = None
         while not self.shutdown_event.is_set():
             error = self.network.last_error
             if error and error != last_reported:
                 last_reported = error
                 self.tui.add_system(error)
+            elif error is None:
+                last_reported = None
             await asyncio.sleep(2)
 
     # -------------------------------------------------------------- lifecycle
@@ -150,7 +146,7 @@ class Orchestrator:
         try:
             await self.tui.run()
         except Exception as e:
-            logger.error(f"Unhandled exception in main loop: {e}")
+            logger.error("Unhandled exception in main loop: %s", e)
         finally:
             await self.shutdown()
             reporter.cancel()
@@ -167,10 +163,12 @@ class Orchestrator:
 
 
 async def main() -> None:
+    # Logs go to a file: writing to stderr would corrupt the full-screen TUI.
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        stream=sys.stderr,
+        filename=str(LOG_FILE),
     )
 
     try:
@@ -185,27 +183,33 @@ async def main() -> None:
         network = NetworkEngine()
         await network.start(config)
 
-        tui = ChatTUI()
+        tui = ChatTUI(
+            status_provider=lambda: (
+                network.remote_peer_id or f"{config.remote.host}:{config.remote.port}",
+                network.peer_online,
+            )
+        )
         orchestrator = Orchestrator(config, history, network, tui)
         tui.orchestrator = orchestrator
 
         tui.add_system(
             f"peer '{config.node.peer_id}' listening on "
             f"{config.local.host}:{config.local.port}, "
-            f"connected to {config.remote.host}:{config.remote.port}"
+            f"connecting to {config.remote.host}:{config.remote.port} "
+            f"(PageUp/PageDown to scroll, /help for commands)"
         )
 
-        async for msg in history.load_history():
+        for msg in [m async for m in history.load_history()][-200:]:
             style = STYLE_ME if msg.role is Role.ME else STYLE_HISTORY
-            await tui.add_message(style, f"[ {msg.role.value} {msg.timestamp} ] {msg.content}")
+            tui.add_message(style, _fmt(msg.role.value, msg.timestamp, msg.content))
 
         await orchestrator.run()
 
     except AppError as e:
-        logging.error(f"FATAL: {e}")
+        print(f"FATAL: {e}", file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:
-        logging.info("Interrupted.")
+        print("Interrupted.", file=sys.stderr)
 
 
 if __name__ == "__main__":

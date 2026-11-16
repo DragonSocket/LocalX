@@ -11,7 +11,6 @@ from src.core.config import AppConfig
 from src.core.exceptions import (
     NetworkConnectionError,
     NetworkInvalidStateError,
-    NetworkProcessError,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,9 +86,13 @@ class NetworkEngine:
 
         # Peer bookkeeping
         self._known_peers: set[str] = set()
+        self._remote_peer_id: Optional[str] = None
         self._error_event = asyncio.Event()
         self._last_error: Optional[str] = None
         self._stop_sentinel = object()
+
+        # Messages typed while the peer was offline, flushed on reconnect.
+        self._outbox: list[str] = []
 
     @property
     def state(self) -> NetworkState:
@@ -98,6 +101,19 @@ class NetworkEngine:
     @property
     def known_peers(self) -> set[str]:
         return set(self._known_peers)
+
+    @property
+    def remote_peer_id(self) -> Optional[str]:
+        return self._remote_peer_id
+
+    @property
+    def peer_online(self) -> bool:
+        """The remote peer is reachable and has completed the handshake."""
+        return (
+            self._state == NetworkState.RUNNING
+            and self._connector is not None
+            and bool(self._known_peers)
+        )
 
     @property
     def last_error(self) -> Optional[str]:
@@ -157,7 +173,7 @@ class NetworkEngine:
             except asyncio.TimeoutError:
                 pass  # still alive -> connection established
             if proc.returncode is not None:
-                logger.warning(
+                logger.debug(
                     "ncat could not reach peer at %s:%s (exit %s)",
                     config.remote.host,
                     config.remote.port,
@@ -166,7 +182,7 @@ class NetworkEngine:
                 return None
             return proc
         except Exception as e:
-            logger.warning(
+            logger.debug(
                 "Connection to peer %s:%s failed: %s", config.remote.host, config.remote.port, e
             )
             return None
@@ -185,6 +201,7 @@ class NetworkEngine:
 
             self._connector = proc
             self._error_event.clear()
+            self._last_error = None
             logger.info("Connected to peer %s:%s", config.remote.host, config.remote.port)
 
             # Handshake so the remote peer knows who we are.
@@ -194,6 +211,9 @@ class NetworkEngine:
                 await proc.stdin.drain()
             except Exception as e:
                 logger.error("Failed to send handshake: %s", e)
+
+            # Anything typed while the peer was offline goes out now.
+            await self._flush_outbox()
 
             self._tasks.append(asyncio.create_task(self._read_stream(proc, "connector")))
             self._tasks.append(asyncio.create_task(self._drain_stderr(proc, "connector")))
@@ -232,6 +252,7 @@ class NetworkEngine:
 
                 if envelope.kind == "hello":
                     self._known_peers.add(envelope.sender_id)
+                    self._remote_peer_id = envelope.sender_id
                     logger.info("Peer '%s' handshake received", envelope.sender_id)
                     continue
 
@@ -256,24 +277,52 @@ class NetworkEngine:
         except Exception:
             pass
 
-    async def send_message(self, content: str, target_id: Optional[str] = None) -> None:
+    async def send_message(self, content: str) -> str:
+        """Send to the peer. If the peer is down, queue for the next reconnect.
+
+        Returns "sent" or "queued".
+        """
         if self._state != NetworkState.RUNNING:
             raise NetworkInvalidStateError("Network is not running.")
 
         envelope = Envelope(sender_id=self._peer_id, payload=content)
 
-        if self._connector is None:
-            raise NetworkInvalidStateError(
-                "No peer connection is currently open. The remote peer is not listening yet."
-            )
-
         # Outbound channel = the connector. Inbound channel = the listener.
+        if self._connector is None or self._connector.stdin is None:
+            if len(self._outbox) >= 200:
+                raise NetworkInvalidStateError(
+                    "Peer is offline and the outbox is full (200 messages)."
+                )
+            self._outbox.append(envelope.to_line())
+            logger.debug("Peer offline, message queued (%d in outbox)", len(self._outbox))
+            return "queued"
+
         try:
             self._connector.stdin.write((envelope.to_line() + "\n").encode("utf-8"))
             await self._connector.stdin.drain()
+            return "sent"
         except Exception as e:
-            logger.error("Failed to send message: %s", e)
-            raise NetworkProcessError(f"Error writing to ncat stdin: {e}") from e
+            # The connector just died mid-write: queue instead of losing the text.
+            self._outbox.append(envelope.to_line())
+            logger.debug("Send failed (%s), message queued", e)
+            return "queued"
+
+    async def _flush_outbox(self) -> None:
+        """Push queued messages out right after a successful reconnect."""
+        if not self._outbox or self._connector is None or self._connector.stdin is None:
+            return
+        try:
+            data = "".join(line + "\n" for line in self._outbox).encode("utf-8")
+            self._connector.stdin.write(data)
+            await self._connector.stdin.drain()
+            flushed = len(self._outbox)
+            self._outbox.clear()
+            logger.info("Flushed %d queued message(s) to peer", flushed)
+        except Exception as e:
+            logger.debug("Outbox flush failed: %s", e)
+
+    def queued_count(self) -> int:
+        return len(self._outbox)
 
     async def listen(self) -> AsyncIterator[Envelope]:
         """Yield incoming envelopes until the engine is stopped."""
@@ -296,6 +345,7 @@ class NetworkEngine:
 
         logger.info("Stopping NetworkEngine...")
         self._state = NetworkState.STOPPING
+        self._last_error = None
 
         for proc in (self._listener, self._connector):
             if proc is None or proc.returncode is not None:
