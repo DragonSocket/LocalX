@@ -157,6 +157,16 @@ class ChatTUI:
         def _scroll_down(event) -> None:
             self._scroll_by(-self._visible_rows())
 
+        # Terminals without mouse reporting (e.g. alacritty) still get a
+        # fine-grained wheel equivalent.
+        @self.kb.add("c-up")
+        def _wheel_up(event) -> None:
+            self._scroll_by(WHEEL_STEP)
+
+        @self.kb.add("c-down")
+        def _wheel_down(event) -> None:
+            self._scroll_by(-WHEEL_STEP)
+
         @self.kb.add("c-home")
         def _jump_top(event) -> None:
             self._scroll = self._max_scroll()
