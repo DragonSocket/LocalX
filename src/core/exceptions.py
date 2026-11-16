@@ -30,10 +30,6 @@ class NetworkConnectionError(AppError):
     """Raised when connection fails."""
     pass
 
-class NetworkProcessError(AppError):
-    """Raised when the network process crashes."""
-    pass
-
 class NetworkInvalidStateError(AppError):
     """Raised when an invalid network operation is attempted."""
     pass

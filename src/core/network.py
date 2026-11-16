@@ -67,6 +67,11 @@ class NetworkEngine:
     - Listener mode: `ncat -l -k <local_host> <local_port>` accepts peers.
     - Connector mode: `ncat <remote_host> <remote_port>` sends to the peer,
       with automatic reconnect so either side can start first.
+
+    Note on `-k`: the listener relays its stdin to ALL connected clients, so
+    with 3+ instances the transport behaves as a group chat, not strict P2P.
+    `/peers` reports the set of peers with live handshakes; the status line
+    reflects whether at least one peer is connected.
     """
 
     def __init__(self, reconnect_delay: float = 3.0):
@@ -84,10 +89,11 @@ class NetworkEngine:
         # Incoming envelopes (bounded -> natural backpressure)
         self._queue: asyncio.Queue[Envelope] = asyncio.Queue(maxsize=500)
 
-        # Peer bookkeeping
+        # Peer bookkeeping. Peers are remembered per stream source so that
+        # when a stream dies its peers are forgotten — status never lies.
         self._known_peers: set[str] = set()
+        self._peers_by_source: dict[str, set[str]] = {}
         self._remote_peer_id: Optional[str] = None
-        self._error_event = asyncio.Event()
         self._last_error: Optional[str] = None
         self._stop_sentinel = object()
 
@@ -189,18 +195,22 @@ class NetworkEngine:
 
     async def _connect_loop(self, config: AppConfig) -> None:
         """Keep an outgoing channel to the remote peer alive."""
+        attempt = 0
         while self._state == NetworkState.RUNNING:
             proc = await self._spawn_connector(config)
             if proc is None:
+                # Exponential backoff: 2s, 4s, 8s ... capped at 15s.
+                delay = min(self._reconnect_delay * (2**attempt), 15.0)
+                attempt += 1
                 self._last_error = (
-                    f"Peer {config.remote.host}:{config.remote.port} unreachable, retrying"
+                    f"Peer {config.remote.host}:{config.remote.port} unreachable, "
+                    f"retrying in {delay:.0f}s"
                 )
-                self._error_event.set()
-                await asyncio.sleep(self._reconnect_delay)
+                await asyncio.sleep(delay)
                 continue
 
+            attempt = 0
             self._connector = proc
-            self._error_event.clear()
             self._last_error = None
             logger.info("Connected to peer %s:%s", config.remote.host, config.remote.port)
 
@@ -230,8 +240,15 @@ class NetworkEngine:
     async def _read_stream(self, proc: asyncio.subprocess.Process, source: str) -> None:
         """Read ncat stdout, parse envelopes, push them into the queue."""
         try:
-            while self._state == NetworkState.RUNNING:
-                line_bytes = await proc.stdout.readline()
+            while True:
+                # Drain grace period: after stop() we keep parsing buffered
+                # lines until EOF or 1s of silence, so late messages survive.
+                try:
+                    line_bytes = await asyncio.wait_for(proc.stdout.readline(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    if self._state != NetworkState.RUNNING:
+                        break
+                    continue
                 if not line_bytes:
                     break
 
@@ -247,22 +264,35 @@ class NetworkEngine:
                 # Never accept our own echoes: the listener broadcasts its stdin to
                 # every client, so an outgoing copy can come back on another stream.
                 if envelope.sender_id == self._peer_id:
-                    logger.debug("Ignored self-echo from %s", source)
+                    logger.warning(
+                        "Ignored echo from peer with the same peer_id '%s' "
+                        "— ensure [node] peer_id is unique per instance",
+                        self._peer_id,
+                    )
                     continue
 
                 if envelope.kind == "hello":
-                    self._known_peers.add(envelope.sender_id)
+                    self._remember_peer(source, envelope.sender_id)
                     self._remote_peer_id = envelope.sender_id
                     logger.info("Peer '%s' handshake received", envelope.sender_id)
                     continue
 
-                self._known_peers.add(envelope.sender_id)
+                self._remember_peer(source, envelope.sender_id)
                 # Bounded queue: `put` blocks when full -> natural backpressure.
                 await self._queue.put(envelope)
         except Exception as e:
             logger.error("Error in %s read loop: %s", source, e)
         finally:
+            # The stream is gone: its peers are no longer reachable.
+            for peer in self._peers_by_source.pop(source, set()):
+                self._known_peers.discard(peer)
+                if peer == self._remote_peer_id and peer not in self._known_peers:
+                    self._remote_peer_id = None
             logger.info("%s read loop terminated", source)
+
+    def _remember_peer(self, source: str, peer_id: str) -> None:
+        self._known_peers.add(peer_id)
+        self._peers_by_source.setdefault(source, set()).add(peer_id)
 
     async def _drain_stderr(self, proc: asyncio.subprocess.Process, source: str) -> None:
         """Consume stderr so the pipe never fills up and reports ncat diagnostics."""
@@ -288,14 +318,19 @@ class NetworkEngine:
         envelope = Envelope(sender_id=self._peer_id, payload=content)
 
         # Outbound channel = the connector. Inbound channel = the listener.
-        if self._connector is None or self._connector.stdin is None:
+        if self._connector is None or self._connector.stdin is None or self._connector.returncode is not None:
             if len(self._outbox) >= 200:
-                raise NetworkInvalidStateError(
-                    "Peer is offline and the outbox is full (200 messages)."
-                )
+                # Graceful degradation: drop the oldest instead of failing hard.
+                self._outbox.pop(0)
+                logger.warning("Outbox full (200): dropped oldest queued message")
             self._outbox.append(envelope.to_line())
             logger.debug("Peer offline, message queued (%d in outbox)", len(self._outbox))
             return "queued"
+
+        # Retry a previously partial flush before the new message, so ordering
+        # and backlog are preserved (audit #6).
+        if self._outbox:
+            await self._flush_outbox()
 
         try:
             self._connector.stdin.write((envelope.to_line() + "\n").encode("utf-8"))
@@ -308,18 +343,30 @@ class NetworkEngine:
             return "queued"
 
     async def _flush_outbox(self) -> None:
-        """Push queued messages out right after a successful reconnect."""
+        """Push queued messages out right after a successful reconnect.
+
+        Written line by line: if the channel dies mid-flush, the unsent tail
+        stays in the outbox for the next reconnect instead of vanishing.
+        """
         if not self._outbox or self._connector is None or self._connector.stdin is None:
             return
+        pending = list(self._outbox)
+        sent = 0
         try:
-            data = "".join(line + "\n" for line in self._outbox).encode("utf-8")
-            self._connector.stdin.write(data)
-            await self._connector.stdin.drain()
-            flushed = len(self._outbox)
+            for line in pending:
+                self._connector.stdin.write((line + "\n").encode("utf-8"))
+                await self._connector.stdin.drain()
+                sent += 1
             self._outbox.clear()
-            logger.info("Flushed %d queued message(s) to peer", flushed)
+            logger.info("Flushed %d queued message(s) to peer", sent)
         except Exception as e:
-            logger.debug("Outbox flush failed: %s", e)
+            self._outbox = pending[sent:]
+            logger.debug(
+                "Outbox flush failed after %d message(s), %d remain queued: %s",
+                sent,
+                len(self._outbox),
+                e,
+            )
 
     def queued_count(self) -> int:
         return len(self._outbox)
@@ -365,7 +412,16 @@ class NetworkEngine:
                 logger.error("Error during process shutdown: %s", e)
 
         for task in self._tasks:
-            task.cancel()
+            # Give read loops a grace period to drain buffered lines before
+            # hard cancellation.
+            try:
+                await asyncio.wait_for(task, timeout=2.0)
+            except asyncio.TimeoutError:
+                task.cancel()
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.debug("Network task ended: %s", e)
         for task in self._tasks:
             try:
                 await task

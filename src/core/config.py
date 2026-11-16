@@ -55,7 +55,14 @@ class AppConfig(BaseModel):
 
 class ConfigLoader:
     def __init__(self, config_path: str = "config.toml"):
-        self.config_path = Path(config_path)
+        path = Path(config_path)
+        # Relative config paths fall back to the project root when run from
+        # another cwd, so settings never "drift" from the repo.
+        if not path.is_absolute() and not path.exists():
+            root_candidate = Path(__file__).resolve().parent.parent.parent / path
+            if root_candidate.exists():
+                path = root_candidate
+        self.config_path = path
         self._config: AppConfig | None = None
 
     def _load_from_toml(self) -> dict[str, Any]:
@@ -112,7 +119,11 @@ class ConfigLoader:
         data = self._apply_env_overrides(data)
 
         # Sensible defaults for a single-node local setup
-        data.setdefault("node", {}).setdefault("peer_id", os.getenv("USER", "peer"))
+        # Default peer_id is unique per instance (pid suffix) so two instances
+        # of the same user never suppress each other as self-echo.
+        data.setdefault("node", {}).setdefault(
+            "peer_id", f"{os.getenv('USER', 'peer')}-{os.getpid()}"
+        )
         data.setdefault("local", {}).setdefault("host", "127.0.0.1")
 
         try:

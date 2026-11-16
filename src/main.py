@@ -13,7 +13,7 @@ from src.ui.tui import ChatTUI, STYLE_HISTORY, STYLE_ME, STYLE_SYSTEM, STYLE_THE
 
 logger = logging.getLogger(__name__)
 
-LOG_FILE = Path("logs") / "localX.log"
+LOG_FILE = Path(__file__).resolve().parent.parent / "logs" / "localX.log"
 
 
 def _now() -> str:

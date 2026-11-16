@@ -48,9 +48,12 @@ class EnvironmentValidator:
 
             detected_version = matches[0]
             
-            # Simple version comparison (major.minor)
+            # Version comparison (major.minor...), normalized to equal length
+            # so [7] vs [7,0] does not falsely compare as less.
             def parse_ver(v):
-                return [int(x) for x in v.split(".")]
+                parts = [int(x) for x in v.split(".")]
+                n = max(len(parts), 2)
+                return parts + [0] * (n - len(parts))
 
             if parse_ver(detected_version) < parse_ver(self.required_ncat_version):
                 logger.error(f"ncat version {detected_version} is below required {self.required_ncat_version}")
