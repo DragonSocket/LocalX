@@ -2,6 +2,7 @@
 
 import os
 import pty
+import re
 import select
 import subprocess
 import sys
@@ -9,6 +10,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+ANSI = re.compile(rb"\x1b\[[0-9;?]*[a-zA-Z]")
 
 
 def spawn(peer_id: str, local_port: int, remote_port: int, history: str):
@@ -42,9 +44,9 @@ def read_chunk(master: int, timeout: float = 3.0) -> str:
                 out += os.read(master, 4096)
             except OSError:
                 break
-        if b" >> " in out:
+        if b">>" in ANSI.sub(b"", out):
             break
-    return out.decode("utf-8", errors="replace")
+    return ANSI.sub(b"", out).decode("utf-8", errors="replace")
 
 
 def main() -> int:
@@ -53,8 +55,8 @@ def main() -> int:
 
     head_a = read_chunk(ma)
     head_b = read_chunk(mb)
-    print("alice UI ready:", " >> " in head_a)
-    print("bob UI ready:  ", " >> " in head_b)
+    print("alice UI ready:", ">>" in head_a)
+    print("bob UI ready:  ", ">>" in head_b)
 
     time.sleep(2.0)  # let the connector reconnect loop settle
 
@@ -85,6 +87,7 @@ def main() -> int:
     ok = ("ping-from-alice" in tail_b) and ("pong-from-bob" in tail_a)
     print("alice saw bob's message:", "pong-from-bob" in tail_a)
     print("bob saw alice's message:", "ping-from-alice" in tail_b)
+    print("bob status line shows peer online:", "ONLINE" in tail_b)
     if not ok:
         print("A stderr:", err_a[-1500:])
         print("B stderr:", err_b[-1500:])

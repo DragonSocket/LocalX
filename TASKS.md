@@ -11,8 +11,11 @@
 - [x] `README.md` — описание реального P2P-поведения, таблица env-переменных, инструкция запуска двух пиров.
 - [x] `scripts/smoke_p2p.py` — тест движка: **SMOKE TEST OK**.
 - [x] `scripts/e2e_two_peers.py` — pty-тест двух UI-пиров: **E2E OK** (alice↔bob обмениваются сообщениями, exit-путь чистый, exit code 0).
+- [x] Скроллинг транскрипта: PageUp/PageDown, Ctrl+Home/End, маркер `... N line(s) above (PageUp)` — подтверждено pyte-пробой (30 сообщений, 41 над экраном).
+- [x] Offline-queue: сообщения в `_outbox` (max 200), флеш при reconnect — **`scripts/reconnect_test.py`: RECONNECT/OUTBOX TEST OK**.
+- [x] Hang на `/exit` устранён: 30+ сообщений → exit code 0 за 1 с, history полностью flush'ится.
+- [x] `tests/` — pytest: config (migration/env/валидация), envelope, history (deadlock-fix, батчи, shutdown). **15 passed**.
 
 ## Следующие шаги
-- [ ] pytest-покрытие (config migration, envelope parse, history flush, reconnect logic).
 - [ ] `peers`-команда: реальный список подключённых peer'ов из handshake.
 - [ ] Улучшение UI-ready детекции в e2e (ANSI-шум в потоке).

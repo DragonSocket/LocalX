@@ -13,12 +13,14 @@ dependencies = [
 dev = [
     "pytest >= 8.0",
     "pytest-asyncio >= 0.23",
+    "pyte >= 0.8",
 ]
 
 [dependency-groups]
 dev = [
     "pytest >= 8.0",
     "pytest-asyncio >= 0.23",
+    "pyte >= 0.8",
 ]
 
 [build-system]
