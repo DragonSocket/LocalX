@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import os
-import threading
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -30,7 +29,6 @@ class HistoryManager:
         self.batch_size = batch_size
         self.flush_interval = flush_interval
         self._buffer: List[ChatMessage] = []
-        self._lock = threading.Lock()
         self._buffer_lock = asyncio.Lock()
         self._file_lock_name = f"{file_path}.lock"
         self._executor = None
@@ -84,9 +82,6 @@ class HistoryManager:
                 # NOTE: flush() re-acquires _buffer_lock, which would deadlock.
                 await self._flush_locked()
 
-    def _batch_size(self) -> int:
-        return self.batch_size
-
     async def flush(self) -> None:
         """Writes the buffer to disk."""
         async with self._buffer_lock:
@@ -103,9 +98,10 @@ class HistoryManager:
         try:
             await self._loop.run_in_executor(self._executor, self._sync_flush, to_write)
         except Exception as e:
-            # If write fails, we might have lost messages in this batch.
-            # In a real app, we might retry or move to a dead-letter file.
-            logger.error(f"Flush failed: {e}")
+            # Put the batch back at the front of the buffer so nothing is
+            # lost: the next flush (retry) will attempt the same messages again.
+            self._buffer[:0] = to_write
+            logger.error(f"Flush failed, batch re-queued ({len(to_write)} msgs): {e}")
             raise HistoryWriteError(f"Failed to flush history to disk: {e}")
 
     def _sync_flush(self, messages: List[ChatMessage]) -> None:

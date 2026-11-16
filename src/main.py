@@ -67,7 +67,12 @@ class Orchestrator:
 
         if text.startswith("/history"):
             parts = text.split(maxsplit=1)
-            count = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 20
+            count = 20
+            if len(parts) > 1:
+                if not parts[1].isdigit():
+                    self.tui.add_system("usage: /history [n]")
+                    return
+                count = min(int(parts[1]), 200)
             tail = [m async for m in self.history.load_history()][-count:]
             for msg in tail:
                 style = STYLE_ME if msg.role is Role.ME else STYLE_HISTORY
@@ -75,7 +80,12 @@ class Orchestrator:
             return
 
         msg = ChatMessage(role=Role.ME, timestamp=_now(), content=text)
-        await self.history.append_message(msg)
+        try:
+            await self.history.append_message(msg)
+        except AppError as e:
+            # Own message not persisted — still show it in the transcript.
+            logger.error("History write failed for outgoing message: %s", e)
+            self.tui.add_system(f"history write failed: {e}")
         self.tui.add_message(STYLE_ME, _fmt("me", msg.timestamp, msg.content))
 
         try:
@@ -97,7 +107,13 @@ class Orchestrator:
                     break
 
                 msg = ChatMessage(role=Role.THEM, timestamp=_now(), content=envelope.payload)
-                await self.history.append_message(msg)
+                try:
+                    await self.history.append_message(msg)
+                except AppError as e:
+                    # Persistence failure must not kill the live transcript:
+                    # keep rendering incoming messages, warn the user.
+                    logger.error("History write failed for incoming message: %s", e)
+                    self.tui.add_system(f"history write failed: {e}")
                 self.tui.add_message(STYLE_THEM, _fmt(envelope.sender_id, msg.timestamp, msg.content))
         except asyncio.CancelledError:
             raise

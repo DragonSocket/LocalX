@@ -201,9 +201,9 @@ class ChatTUI:
             self.app.invalidate()
 
     def _max_scroll(self) -> int:
-        """Largest scroll offset that still keeps at least one line visible."""
+        """Largest scroll offset that still fills the screen with old lines."""
         rows, cols = self._terminal_size()
-        return max(0, len(self._wrapped_lines(cols)) - 1)
+        return max(0, len(self._wrapped_lines(cols)) - rows)
 
     # ------------------------------------------------------------- rendering
     def _wrapped_lines(self, cols: int) -> list[tuple[str, str]]:
@@ -270,18 +270,20 @@ class ChatTUI:
     def add_message(self, style: str, text: str) -> None:
         self._buffer.append((style, text))
         if len(self._buffer) > MAX_BUFFER_LINES:
-            del self._buffer[: len(self._buffer) - MAX_BUFFER_LINES]
+            removed = len(self._buffer) - MAX_BUFFER_LINES
+            del self._buffer[:removed]
+            # Old lines were dropped from the top: shift the manual offset so
+            # the user keeps looking at the same content instead of blank space.
+            self._scroll = max(0, self._scroll - removed)
+            if self._scroll > self._max_scroll():
+                self._scroll = self._max_scroll()
         if self._scroll > 0:
             self._unread += 1
         if self.app is not None:
             self.app.invalidate()
 
     def add_system(self, text: str) -> None:
-        self._buffer.append((STYLE_SYSTEM, f"[ SYSTEM ] {text}"))
-        if self._scroll > 0:
-            self._unread += 1
-        if self.app is not None:
-            self.app.invalidate()
+        self.add_message(STYLE_SYSTEM, f"[ SYSTEM ] {text}")
 
     # ----------------------------------------------------------- input routing
     def _dispatch(self, text: str) -> None:

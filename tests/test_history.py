@@ -2,6 +2,9 @@
 
 from pathlib import Path
 
+import pytest
+
+from src.core.exceptions import HistoryWriteError
 from src.core.history import ChatMessage, HistoryManager, Role
 
 
@@ -19,6 +22,31 @@ async def test_batch_flush_writes_to_disk(tmp_path: Path) -> None:
         lines = path.read_text(encoding="utf-8").splitlines()
         assert len(lines) == 3
         assert "msg-0" in lines[0] and "msg-2" in lines[2]
+    finally:
+        await hm.shutdown()
+
+
+async def test_flush_failure_requeues_batch(tmp_path: Path) -> None:
+    """A failed disk write must not lose the batch: it goes back in the buffer."""
+    path = tmp_path / "history.jsonl"
+    hm = HistoryManager(path, batch_size=2, flush_interval=999)
+    await hm.initialize()
+    try:
+        await hm.append_message(make_msg(0))
+        await hm.append_message(make_msg(1))  # triggers flush -> written
+        assert len(path.read_text(encoding="utf-8").splitlines()) == 2
+
+        # Make the next write fail: the file becomes unreadable/unwritable.
+        path.chmod(0o000)
+        await hm.append_message(make_msg(2))
+        with pytest.raises(HistoryWriteError):
+            await hm.append_message(make_msg(3))  # flush fails, batch re-queued
+        assert len(hm._buffer) == 2
+
+        path.chmod(0o644)  # restore a writable file
+        await hm.flush()
+        lines = path.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 4 and "msg-2" in lines[2] and "msg-3" in lines[3]
     finally:
         await hm.shutdown()
 
